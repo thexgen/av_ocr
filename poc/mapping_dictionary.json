@@ -1,0 +1,160 @@
+{
+  "CustomerID": {
+    "aliases": ["Customer ID", "CustomerId", "Client ID", "ClientID"]
+  },
+  "AccountNumber": {
+    "aliases": ["Account Number", "Account No", "Account #", "Account No.", "A/C No", "Acct Number", "Acct No"]
+  },
+  "AccruedInterestLocal": {
+    "aliases": ["Accrued Interest Local", "Accrued Interest", "Accrued Int Local"]
+  },
+  "AccruedInterestBase": {
+    "aliases": ["Accrued Interest Base", "Accrued Int Base"]
+  },
+  "AccruedIncomeLocal": {
+    "aliases": ["Accrued Income Local", "Accrued Income"]
+  },
+  "AccruedIncomeBase": {
+    "aliases": ["Accrued Income Base"]
+  },
+  "AsofDate": {
+    "aliases": [
+      "As of Date",
+      "As Of Date",
+      "As On Date",
+      "Statement Date",
+      "Valuation Date",
+      "Holding Date",
+      "Trade Date",
+      "Txn Date",
+      "Transaction Date",
+      "Date",
+      "AsofDate",
+      "As-Of-Date",
+      "trade_date",
+      "TRADE-DATE"
+    ]
+  },
+  "CostLocal": {
+    "aliases": ["Cost Local", "Cost", "Book Cost", "Purchase Cost", "Balance"]
+  },
+  "CostBase": {
+    "aliases": ["Cost Base", "Base Cost"]
+  },
+  "Coupon": {
+    "aliases": ["Coupon", "Coupon Rate"]
+  },
+  "CurrencyBase": {
+    "aliases": ["Currency Base", "Base Currency", "Base CCY"]
+  },
+  "CurrencyLocal": {
+    "aliases": ["Currency Local", "Currency", "CCY", "Local Currency"]
+  },
+  "Quantity": {
+    "aliases": [
+      "Qty",
+      "Quantity",
+      "Holding Qty",
+      "Units",
+      "Balance Units",
+      "Holding Units",
+      "Curr. Bal",
+      "Curr Bal",
+      "Current Bal",
+      "Current Balance",
+      "Free Bal",
+      "Free Bal.",
+      "Free Balance",
+      "Shares",
+      "No of Units",
+      "Number of Units"
+    ]
+  },
+  "CUSIP": {
+    "aliases": ["CUSIP", "CUSIP Code"]
+  },
+  "ISIN": {
+    "aliases": ["ISIN", "ISIN Code", "ISIN No", "ISIN Number"]
+  },
+  "MarketValueLocal": {
+    "aliases": [
+      "Market Value Local",
+      "Market Value",
+      "Current Value",
+      "Holding Value",
+      "Portfolio Value",
+      "Current Market Value",
+      "Value",
+      "Investment Balance",
+      "Fund Worth",
+      "Withdrawal (Dr)",
+      "Withdrawal",
+      "Debit",
+      "Deposit (Cr)",
+      "Deposit",
+      "Credit",
+      "Amount"
+    ]
+  },
+  "MarketValueBase": {
+    "aliases": ["Market Value Base", "Base Market Value"]
+  },
+  "MaturityDT": {
+    "aliases": ["Maturity Date", "Maturity", "Maturity DT", "MaturityDT"]
+  },
+  "OriginalFace": {
+    "aliases": ["Original Face", "Face Amount", "Face Price", "Par Value", "Face Value"]
+  },
+  "PriceLocal": {
+    "aliases": ["Price Local", "Price", "NAV", "Unit Price", "Rate", "Unit NAV"]
+  },
+  "PriceBase": {
+    "aliases": ["Price Base", "Base Price"]
+  },
+  "SecurityDescription": {
+    "aliases": [
+      "Security Description",
+      "Scheme Name",
+      "Fund Name",
+      "Security Name",
+      "Instrument Name",
+      "Asset Name",
+      "Description",
+      "Company Name",
+      "Scrip Name",
+      "Script Name",
+      "Narration",
+      "Particulars",
+      "RawText",
+      "Raw Text",
+      "Security"
+    ]
+  },
+  "SecurityID": {
+    "aliases": [
+      "Security ID",
+      "Security Id",
+      "Sec ID",
+      "Chq/Ref No",
+      "Chq Ref No",
+      "Ref No",
+      "Reference No",
+      "Reference Number"
+    ]
+  },
+  "SecurityType": {
+    "aliases": ["Security Type", "Asset Type", "Instrument Type", "Type"]
+  },
+  "SEDOL": {
+    "aliases": ["SEDOL", "SEDOL Code"]
+  },
+  "Ticker": {
+    "aliases": ["Ticker", "Symbol", "Ticker Symbol"]
+  },
+  "Custodian": {
+    "aliases": ["Custodian", "Broker", "Depository", "DP Name"]
+  },
+  "AccountTitle": {
+    "aliases": ["Account Title", "Account Name", "Client Name", "Holder Name"]
+  }
+}

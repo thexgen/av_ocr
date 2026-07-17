@@ -1,0 +1,51 @@
+# Holding Statement Processing Engine — local config
+# No AWS / Lambda / DB. Swap storage adapter later without changing pipeline.
+
+storage:
+  sample_data_prefix: sample_data
+  output_prefix: output
+  jobs_prefix: jobs
+  uploads_prefix: sample_data/uploads
+
+job:
+  id_prefix: JOB
+  counter_key: jobs/job_counter.json
+  history_key: jobs/upload_history.json
+
+processing:
+  batch_size: 100
+  max_file_size_mb: 25
+  max_pages: 100
+  text_pdf_char_threshold: 40
+  confidence_threshold: 70
+  ocr_enabled: true
+  # auto | rapidocr | paddleocr  (auto prefers RapidOCR on Windows)
+  ocr_engine: auto
+  llm_enabled: true
+  allow_local_mapper_fallback: true
+  document_type: Holding Statement
+
+supported_extensions:
+  - .pdf
+
+# Soft validation for POC: description is enough to export a row.
+# Quantity/value enforced later when posting into client holdings DB.
+validation:
+  required_fields:
+    - SecurityDescription
+
+mapping:
+  dictionary_path: mapping_dictionary.json
+  learned_path: mapping_dictionary_learned.json
+
+qwen:
+  model: qwen-plus
+  base_url: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
+  temperature: 0
+
+logging:
+  level: INFO
+  logger_name: holding_engine
+
+placeholders:
+  default_user_id: USER_LOCAL_001
