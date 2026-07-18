@@ -7,6 +7,7 @@ from typing import Any
 from poc.config import OUTPUT_PREFIX, cfg
 from poc.exceptions import (
     EmptyPDFError,
+    ExtractionQualityError,
     OCRFailureError,
     ProcessingError,
     UnsupportedDocumentError,
@@ -15,13 +16,19 @@ from poc.interfaces.storage import StorageService
 from poc.job.history_store import HistoryStore, save_validation_report
 from poc.job.models import UploadHistory
 from poc.logging_setup import bind_job, format_processing_time, job_elapsed_seconds, stage
-from poc.pipeline.apply_mapping import apply_mapping_to_rows
+from poc.db.bankcash_repository import insert_canonical_into_temp
+from poc.export.canonical import build_canonical_transactions
+from poc.export.schemas import DOCUMENT_TYPE_BANK_STATEMENT
 from poc.pipeline.export import persist_extraction_debug_outputs, persist_outputs
 from poc.pipeline.extract_ocr_pdf import extract_with_paddleocr
 from poc.pipeline.extract_text_pdf import extract_with_pymupdf
 from poc.pipeline.pdf_detect import detect_pdf_type
 from poc.pipeline.mapping_engine import resolve_field_mapping
-from poc.pipeline.validation import build_validation_report, classify_rows
+from poc.pipeline.validation import (
+    assess_bank_extraction_quality,
+    build_validation_report,
+    classify_rows,
+)
 
 logger = logging.getLogger("holding_engine")
 
@@ -52,9 +59,13 @@ def run_pipeline(
     ocr_used = False
     llm_used = False
     total_pages = 0
-    normalized: list[dict[str, Any]] = []
+    canonical_rows: list[Any] = []
     keys: dict[str, str] = {}
     debug_keys: dict[str, str] = {}
+    db_summary: dict[str, Any] = {}
+    document_type = str(
+        cfg("processing", "document_type", default=DOCUMENT_TYPE_BANK_STATEMENT)
+    )
 
     def _mark_stage(name: str, detail: str = "ok") -> None:
         stages.append({"stage": name, "detail": detail, "at": datetime.now().isoformat(timespec="seconds")})
@@ -113,9 +124,7 @@ def run_pipeline(
             headers=extraction.headers,
             rows=extraction.rows,
             raw_text=extraction.raw_text,
-            document_type=str(
-                cfg("processing", "document_type", default="Holding Statement")
-            ),
+            document_type=document_type,
             page_count=total_pages,
         )
 
@@ -123,6 +132,21 @@ def run_pipeline(
             raise EmptyPDFError("No content could be extracted from the document")
 
         extract_warnings = list(extraction.metadata.pop("_extract_warnings", []) or [])
+        bank_parser_headers = bool(extraction.metadata.pop("_bank_parser_headers", False))
+
+        quality_failures = assess_bank_extraction_quality(
+            headers=extraction.headers or [],
+            rows=extraction.rows or [],
+            raw_text=extraction.raw_text or "",
+            extract_warnings=extract_warnings,
+            bank_parser_headers=bank_parser_headers,
+        )
+        if quality_failures:
+            raise ExtractionQualityError(
+                "Bank statement extraction quality check failed: "
+                + "; ".join(quality_failures),
+                warnings=extract_warnings + quality_failures,
+            )
 
         with stage("MAP", logger):
             mapping_response = resolve_field_mapping(
@@ -138,21 +162,24 @@ def run_pipeline(
             # Pipeline continues even if some/all headers stay unmapped
             if not field_mapping:
                 mapping_response.setdefault("warnings", []).append(
-                    "No headers mapped yet — exporting rows with null schema fields"
+                    "No headers mapped yet — canonical fields may remain blank"
                 )
+            mapping_response["document_type"] = document_type
             _mark_stage("MAP", mapping_response.get("_mapper", "unknown"))
 
-        with stage("NORMALIZE", logger):
-            normalized = apply_mapping_to_rows(
+        with stage("CANONICALIZE", logger):
+            canonical_rows = build_canonical_transactions(
                 rows=extraction.rows,
                 field_mapping=field_mapping,
                 metadata=extraction.metadata,
                 mapping_metadata=mapping_response.get("metadata") or {},
+                document_type=document_type,
             )
-            _mark_stage("NORMALIZE", f"rows={len(normalized)}")
+            _mark_stage("CANONICALIZE", f"rows={len(canonical_rows)}")
 
         with stage("VALIDATE_ROWS", logger):
-            valid_rows, error_rows, row_warnings = classify_rows(normalized)
+            validation_records = [r.to_validation_record() for r in canonical_rows]
+            valid_rows, error_rows, row_warnings = classify_rows(validation_records)
             map_warnings = list(mapping_response.get("warnings") or [])
             warnings = extract_warnings + map_warnings + row_warnings
             _mark_stage("VALIDATE_ROWS", f"valid={valid_rows} error={error_rows}")
@@ -162,6 +189,9 @@ def run_pipeline(
                 (mapping_response.get("metadata") or {}).get("statement_date")
                 or extraction.metadata.get("statement_date")
             )
+            # Prefer first trade date for filename stamp when statement_date absent
+            if not asof and canonical_rows:
+                asof = canonical_rows[0].trade_date or canonical_rows[0].asof_date
             extraction_info = {
                 "input_key": input_key,
                 "pdf_type": extraction.pdf_type,
@@ -173,20 +203,45 @@ def run_pipeline(
             }
             keys = persist_outputs(
                 storage=storage,
-                records=normalized,
+                job_id=job_id,
+                transactions=canonical_rows,
                 mapping_response=mapping_response,
                 extraction_info=extraction_info,
-                job_id=job_id,
+                document_type=document_type,
                 asof_hint=asof,
             )
             _mark_stage("PERSIST")
+
+        with stage("DB_STAGE", logger):
+            db_summary = insert_canonical_into_temp(
+                job_id=job_id,
+                transactions=canonical_rows,
+                filename=history.original_file_name,
+            )
+            warnings.append(
+                f"Staged {db_summary.get('inserted', 0)} row(s) into bankcashtemp "
+                f"(clean={db_summary.get('clean_rows', 0)}, "
+                f"error={db_summary.get('error_rows', 0)})"
+            )
+            _mark_stage(
+                "DB_STAGE",
+                f"inserted={db_summary.get('inserted', 0)} "
+                f"error={db_summary.get('error_rows', 0)}",
+            )
+
+        # Prefer DB staging validation counts when available
+        db_error_rows = int(db_summary.get("error_rows") or 0)
+        db_clean_rows = int(db_summary.get("clean_rows") or 0)
+        if db_summary.get("inserted"):
+            error_rows = db_error_rows
+            valid_rows = db_clean_rows
 
         status = "SUCCESS" if error_rows == 0 else "SUCCESS_WITH_WARNINGS"
         elapsed = job_elapsed_seconds()
         report = build_validation_report(
             job_id=job_id,
             status=status,
-            total_rows=len(normalized),
+            total_rows=len(canonical_rows),
             valid_rows=valid_rows,
             error_rows=error_rows,
             warnings=warnings,
@@ -201,7 +256,7 @@ def run_pipeline(
             status=status,
             start_dt=start_dt,
             total_pages=total_pages,
-            total_rows=len(normalized),
+            total_rows=len(canonical_rows),
             valid_rows=valid_rows,
             error_rows=error_rows,
             ocr_used=ocr_used,
@@ -209,25 +264,36 @@ def run_pipeline(
         )
 
         logger.info(
-            "JOB COMPLETE | status=%s time=%s csv=%s report=%s",
+            "JOB COMPLETE | status=%s time=%s canonical=%s txn_csv=%s cash_csv=%s report=%s",
             status,
             format_processing_time(elapsed),
-            keys.get("csv_key"),
+            keys.get("canonical_key"),
+            keys.get("transaction_csv_key"),
+            keys.get("cash_csv_key"),
             report_key,
         )
         return {
             "job_id": job_id,
             "status": status,
-            "json_key": keys.get("json_key"),
-            "csv_key": keys.get("csv_key"),
+            "canonical_key": keys.get("canonical_key"),
+            "transaction_csv_key": keys.get("transaction_csv_key"),
+            "cash_csv_key": keys.get("cash_csv_key"),
+            "json_key": keys.get("canonical_key"),
+            "csv_key": keys.get("transaction_csv_key"),
             "actual_extracted_output_key": debug_keys.get("actual_extracted_output_key"),
             "mapping_analysis_key": debug_keys.get("mapping_analysis_key"),
             "validation_report_key": report_key,
-            "records": len(normalized),
+            "records": len(canonical_rows),
             "valid_rows": valid_rows,
             "error_rows": error_rows,
             "ocr_used": ocr_used,
             "llm_used": llm_used,
+            "document_type": document_type,
+            "db_staged": db_summary.get("inserted", 0),
+            "db_error_rows": db_summary.get("error_rows", 0),
+            "db_clean_rows": db_summary.get("clean_rows", 0),
+            "entity_id": db_summary.get("entity_id"),
+            "entity_name": db_summary.get("entity_name"),
         }
 
     except ProcessingError as exc:
@@ -241,7 +307,7 @@ def run_pipeline(
             total_pages=total_pages,
             ocr_used=ocr_used,
             llm_used=llm_used,
-            total_rows=len(normalized),
+            total_rows=len(canonical_rows),
         )
     except Exception as exc:  # noqa: BLE001
         # Unexpected errors still produce a validation report — never crash silently
@@ -257,7 +323,7 @@ def run_pipeline(
             total_pages=total_pages,
             ocr_used=ocr_used,
             llm_used=llm_used,
-            total_rows=len(normalized),
+            total_rows=len(canonical_rows),
         )
 
 

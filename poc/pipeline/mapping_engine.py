@@ -177,7 +177,7 @@ def resolve_field_mapping(
     warnings.extend(llm_warnings)
 
     return {
-        "document_type": str(cfg("processing", "document_type", default="Holding Statement")),
+        "document_type": str(cfg("processing", "document_type", default="Bank Statement")),
         "metadata": {
             "statement_date": metadata.get("statement_date"),
             "custodian": metadata.get("custodian"),

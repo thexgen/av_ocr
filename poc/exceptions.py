@@ -37,6 +37,12 @@ class MissingHoldingTableError(ProcessingError):
     code = "MISSING_HOLDING_TABLE"
 
 
+class ExtractionQualityError(ProcessingError):
+    """Structured extraction is too poor to trust (synthetic/low rows/missing amount cols)."""
+
+    code = "EXTRACTION_QUALITY_FAILED"
+
+
 class FileTooLargeError(ProcessingError):
     code = "FILE_TOO_LARGE"
 

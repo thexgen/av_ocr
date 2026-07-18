@@ -1,4 +1,4 @@
-# Holding Statement Processing Engine — local config
+# Bank Statement Processing Engine — local config
 # No AWS / Lambda / DB. Swap storage adapter later without changing pipeline.
 
 storage:
@@ -23,13 +23,12 @@ processing:
   ocr_engine: auto
   llm_enabled: true
   allow_local_mapper_fallback: true
-  document_type: Holding Statement
+  document_type: Bank Statement
 
 supported_extensions:
   - .pdf
 
 # Soft validation for POC: description is enough to export a row.
-# Quantity/value enforced later when posting into client holdings DB.
 validation:
   required_fields:
     - SecurityDescription

@@ -17,6 +17,7 @@ poc/output/*
 !poc/output/.gitkeep
 poc/jobs/
 poc/.env
+.env
 .venv/
 __pycache__/
 *.pyc

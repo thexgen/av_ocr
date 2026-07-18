@@ -10,7 +10,9 @@ class StorageService(ABC):
 
     Keys are logical paths, e.g.:
       - sample_data/sample_holding_statement.pdf
-      - output/holding_20260715.csv
+      - output/{job_id}/canonical_transactions.json
+      - output/{job_id}/TRANSACTION_YYYYMMDD.csv
+      - output/{job_id}/CASH_YYYYMMDD.csv
 
     Implementations map keys to a backend (local disk today, S3 later).
     Pipeline code must not import S3/boto3 or assume local Paths.

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import {
@@ -8,10 +8,16 @@ import {
   ArrowRight,
   Filter,
   Search,
+  Loader2,
+  AlertCircle,
 } from 'lucide-react'
 import { Button, GlassCard } from '../components/ui/GlassCard'
 import { TransactionDrawer } from '../components/TransactionDrawer'
-import { mockTransactions } from '../data/mockData'
+import {
+  getJobTransactions,
+  JOB_STORAGE_KEY,
+  type ReviewTransaction,
+} from '../api/client'
 import type { Transaction, TransactionStatus } from '../types'
 
 const statusMeta: Record<
@@ -39,9 +45,10 @@ const statusMeta: Record<
 }
 
 function formatMoney(n: number) {
-  return new Intl.NumberFormat('en-US', {
+  return new Intl.NumberFormat('en-IN', {
     style: 'currency',
-    currency: 'USD',
+    currency: 'INR',
+    maximumFractionDigits: 2,
   }).format(n)
 }
 
@@ -50,24 +57,96 @@ function formatNum(n: number | null) {
   return n.toLocaleString('en-US', { maximumFractionDigits: 4 })
 }
 
+function loadJobMeta(): { jobId: string; fileName: string } | null {
+  try {
+    const raw = sessionStorage.getItem(JOB_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { jobId?: string; fileName?: string }
+    if (!parsed.jobId) return null
+    return {
+      jobId: parsed.jobId,
+      fileName: parsed.fileName || 'statement.pdf',
+    }
+  } catch {
+    return null
+  }
+}
+
+function toTransaction(row: ReviewTransaction): Transaction {
+  return {
+    id: row.id,
+    tradeDate: row.tradeDate || '—',
+    type: row.type || 'Unknown',
+    security: row.security || '(no description)',
+    quantity: row.quantity,
+    price: row.price,
+    amount: row.amount ?? 0,
+    status: row.status,
+    confidence: row.confidence ?? 0,
+    originalText: row.originalText || row.security || '',
+    normalizedJson: row.normalizedJson || {},
+    validationErrors: row.validationErrors || [],
+    aiReasoning: row.aiReasoning || '',
+    iserror: row.iserror,
+    errordesc: row.errordesc,
+  }
+}
+
 export function ReviewPage() {
+  const meta = useMemo(() => loadJobMeta(), [])
   const [selected, setSelected] = useState<Transaction | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState<'all' | TransactionStatus>('all')
   const [query, setQuery] = useState('')
+  const [transactions, setTransactions] = useState<Transaction[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [entityName, setEntityName] = useState('Krishna Deval')
+  const [fileName, setFileName] = useState(meta?.fileName ?? '')
+
+  useEffect(() => {
+    if (!meta?.jobId) {
+      setLoading(false)
+      setError('No active job. Please upload a bank statement first.')
+      return
+    }
+
+    let cancelled = false
+    const load = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const data = await getJobTransactions(meta.jobId)
+        if (cancelled) return
+        setTransactions(data.transactions.map(toTransaction))
+        setEntityName(data.entity_name || 'Krishna Deval')
+        if (data.original_file_name) setFileName(data.original_file_name)
+      } catch (err) {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Failed to load transactions')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    void load()
+    return () => {
+      cancelled = true
+    }
+  }, [meta])
 
   const filtered = useMemo(() => {
-    return mockTransactions.filter((t) => {
+    return transactions.filter((t) => {
       const matchStatus = filter === 'all' || t.status === filter
       const q = query.toLowerCase()
       const matchQuery =
         !q ||
         t.security.toLowerCase().includes(q) ||
         t.type.toLowerCase().includes(q) ||
-        t.tradeDate.includes(q)
+        t.tradeDate.includes(q) ||
+        (t.errordesc || '').toLowerCase().includes(q)
       return matchStatus && matchQuery
     })
-  }, [filter, query])
+  }, [filter, query, transactions])
 
   const allChecked =
     filtered.length > 0 && filtered.every((t) => checked.has(t.id))
@@ -98,10 +177,10 @@ export function ReviewPage() {
   }
 
   const counts = {
-    valid: mockTransactions.filter((t) => t.status === 'valid').length,
-    needs_review: mockTransactions.filter((t) => t.status === 'needs_review')
+    valid: transactions.filter((t) => t.status === 'valid').length,
+    needs_review: transactions.filter((t) => t.status === 'needs_review')
       .length,
-    missing_data: mockTransactions.filter((t) => t.status === 'missing_data')
+    missing_data: transactions.filter((t) => t.status === 'missing_data')
       .length,
   }
 
@@ -113,7 +192,22 @@ export function ReviewPage() {
             Review Transactions
           </h1>
           <p className="mt-1.5 text-sm text-slate-400">
-            Validate AI-extracted trades before posting to the portfolio ledger.
+            Staged in <span className="text-slate-300">bankcashtemp</span>
+            {fileName ? (
+              <>
+                {' '}
+                · <span className="font-medium text-accent-400">{fileName}</span>
+              </>
+            ) : null}
+            {' '}
+            · Entity:{' '}
+            <span className="text-slate-300">{entityName}</span>
+            {meta?.jobId ? (
+              <>
+                {' '}
+                · <span className="font-mono text-xs text-slate-500">{meta.jobId}</span>
+              </>
+            ) : null}
           </p>
         </div>
         <Link to="/success">
@@ -123,11 +217,23 @@ export function ReviewPage() {
         </Link>
       </div>
 
+      {error && (
+        <div className="flex items-start gap-2 rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-red-300">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <p>{error}</p>
+            <Link to="/upload" className="mt-1 inline-block text-accent-400 underline">
+              Go to Upload
+            </Link>
+          </div>
+        </div>
+      )}
+
       {/* Legend / filters */}
       <div className="flex flex-wrap gap-2">
         {(
           [
-            ['all', `All (${mockTransactions.length})`],
+            ['all', `All (${transactions.length})`],
             ['valid', `Valid (${counts.valid})`],
             ['needs_review', `Needs Review (${counts.needs_review})`],
             ['missing_data', `Missing Data (${counts.missing_data})`],
@@ -155,13 +261,21 @@ export function ReviewPage() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search security, type, date…"
+              placeholder="Search description, type, date, error…"
               className="w-full rounded-xl border border-white/10 bg-navy-950/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
             />
           </div>
           <div className="flex items-center gap-2 text-xs text-slate-500">
-            <Filter className="h-3.5 w-3.5" />
-            {filtered.length} rows · click a row for AI detail
+            {loading ? (
+              <>
+                <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading from MySQL…
+              </>
+            ) : (
+              <>
+                <Filter className="h-3.5 w-3.5" />
+                {filtered.length} rows · click a row for detail
+              </>
+            )}
           </div>
         </div>
 
@@ -180,97 +294,89 @@ export function ReviewPage() {
                 </th>
                 <th className="px-3 py-3 font-semibold">Trade Date</th>
                 <th className="px-3 py-3 font-semibold">Type</th>
-                <th className="px-3 py-3 font-semibold">Security</th>
+                <th className="px-3 py-3 font-semibold">Description</th>
                 <th className="px-3 py-3 font-semibold text-right">Quantity</th>
                 <th className="px-3 py-3 font-semibold text-right">Price</th>
                 <th className="px-3 py-3 font-semibold text-right">Amount</th>
                 <th className="px-3 py-3 font-semibold">Status</th>
-                <th className="px-3 py-3 font-semibold text-right">Confidence</th>
+                <th className="px-3 py-3 font-semibold">Errors</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((txn, i) => {
-                const meta = statusMeta[txn.status]
-                const StatusIcon = meta.icon
-                return (
-                  <motion.tr
-                    key={txn.id}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.03 }}
-                    onClick={() => setSelected(txn)}
-                    className={`cursor-pointer border-b border-white/[0.03] transition-colors ${meta.row}`}
-                  >
-                    <td
-                      className="px-4 py-3"
-                      onClick={(e) => e.stopPropagation()}
+              {!loading &&
+                filtered.map((txn, i) => {
+                  const metaRow = statusMeta[txn.status]
+                  const StatusIcon = metaRow.icon
+                  return (
+                    <motion.tr
+                      key={txn.id}
+                      initial={{ opacity: 0, y: 6 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: Math.min(i, 20) * 0.02 }}
+                      onClick={() => setSelected(txn)}
+                      className={`cursor-pointer border-b border-white/[0.03] transition-colors ${metaRow.row}`}
                     >
-                      <input
-                        type="checkbox"
-                        checked={checked.has(txn.id)}
-                        onChange={() => toggleOne(txn.id)}
-                        className="h-3.5 w-3.5 rounded border-slate-600 bg-navy-800 accent-accent-500"
-                        aria-label={`Select ${txn.id}`}
-                      />
-                    </td>
-                    <td className="px-3 py-3 font-mono text-xs text-slate-300">
-                      {txn.tradeDate}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span className="rounded-md bg-navy-700/80 px-2 py-0.5 text-xs font-medium text-slate-300">
-                        {txn.type}
-                      </span>
-                    </td>
-                    <td className="max-w-[220px] truncate px-3 py-3 font-medium text-slate-100">
-                      {txn.security}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
-                      {formatNum(txn.quantity)}
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
-                      {txn.price !== null ? formatMoney(txn.price) : '—'}
-                    </td>
-                    <td
-                      className={`px-3 py-3 text-right font-mono text-xs font-semibold ${
-                        txn.amount < 0 ? 'text-red-300' : 'text-green-300'
-                      }`}
-                    >
-                      {formatMoney(txn.amount)}
-                    </td>
-                    <td className="px-3 py-3">
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${meta.badge}`}
+                      <td
+                        className="px-4 py-3"
+                        onClick={(e) => e.stopPropagation()}
                       >
-                        <StatusIcon className="h-3 w-3" />
-                        {meta.label}
-                      </span>
-                    </td>
-                    <td className="px-3 py-3 text-right">
-                      <div className="inline-flex items-center gap-2">
-                        <div className="hidden h-1.5 w-12 overflow-hidden rounded-full bg-navy-700 sm:block">
-                          <div
-                            className={`h-full rounded-full ${
-                              txn.confidence >= 90
-                                ? 'bg-valid'
-                                : txn.confidence >= 70
-                                  ? 'bg-warning'
-                                  : 'bg-error'
-                            }`}
-                            style={{ width: `${txn.confidence}%` }}
-                          />
-                        </div>
-                        <span className="font-mono text-xs text-slate-300">
-                          {txn.confidence.toFixed(1)}%
+                        <input
+                          type="checkbox"
+                          checked={checked.has(txn.id)}
+                          onChange={() => toggleOne(txn.id)}
+                          className="h-3.5 w-3.5 rounded border-slate-600 bg-navy-800 accent-accent-500"
+                          aria-label={`Select ${txn.id}`}
+                        />
+                      </td>
+                      <td className="px-3 py-3 font-mono text-xs text-slate-300">
+                        {txn.tradeDate || '—'}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span className="rounded-md bg-navy-700/80 px-2 py-0.5 text-xs font-medium text-slate-300">
+                          {txn.type}
                         </span>
-                      </div>
-                    </td>
-                  </motion.tr>
-                )
-              })}
+                      </td>
+                      <td className="max-w-[260px] truncate px-3 py-3 font-medium text-slate-100">
+                        {txn.security}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
+                        {formatNum(txn.quantity)}
+                      </td>
+                      <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
+                        {txn.price !== null ? formatMoney(txn.price) : '—'}
+                      </td>
+                      <td
+                        className={`px-3 py-3 text-right font-mono text-xs font-semibold ${
+                          txn.amount < 0 ? 'text-red-300' : 'text-green-300'
+                        }`}
+                      >
+                        {formatMoney(txn.amount)}
+                      </td>
+                      <td className="px-3 py-3">
+                        <span
+                          className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold ${metaRow.badge}`}
+                        >
+                          <StatusIcon className="h-3 w-3" />
+                          {metaRow.label}
+                        </span>
+                      </td>
+                      <td className="max-w-[200px] truncate px-3 py-3 text-xs text-red-300/90">
+                        {txn.errordesc || '—'}
+                      </td>
+                    </motion.tr>
+                  )
+                })}
             </tbody>
           </table>
 
-          {filtered.length === 0 && (
+          {loading && (
+            <div className="flex items-center justify-center gap-2 px-5 py-16 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading transactions from bankcashtemp…
+            </div>
+          )}
+
+          {!loading && filtered.length === 0 && !error && (
             <div className="px-5 py-16 text-center text-sm text-slate-500">
               No transactions match your filters.
             </div>
@@ -278,18 +384,14 @@ export function ReviewPage() {
         </div>
       </GlassCard>
 
-      {/* Color legend */}
       <div className="flex flex-wrap gap-4 text-xs text-slate-500">
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-valid" /> Green = Valid
-        </span>
-        <span className="inline-flex items-center gap-1.5">
-          <span className="h-2.5 w-2.5 rounded-full bg-warning" /> Yellow = Needs
-          Review
+          (iserror=0)
         </span>
         <span className="inline-flex items-center gap-1.5">
           <span className="h-2.5 w-2.5 rounded-full bg-error" /> Red = Missing
-          Data
+          date / amount / transaction type
         </span>
       </div>
 

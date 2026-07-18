@@ -13,7 +13,7 @@ export type TransactionType =
 export interface Transaction {
   id: string
   tradeDate: string
-  type: TransactionType
+  type: TransactionType | string
   security: string
   quantity: number | null
   price: number | null
@@ -24,6 +24,8 @@ export interface Transaction {
   normalizedJson: Record<string, unknown>
   validationErrors: string[]
   aiReasoning: string
+  iserror?: boolean
+  errordesc?: string | null
 }
 
 export interface RecentImport {

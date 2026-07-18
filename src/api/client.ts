@@ -86,6 +86,60 @@ export async function getJobStatus(jobId: string): Promise<JobStatusResponse> {
   return res.json() as Promise<JobStatusResponse>
 }
 
+export interface ReviewTransaction {
+  id: string
+  rowno?: number
+  job_id?: string
+  entity_id?: number
+  entity_name?: string
+  user_id?: number
+  tradeDate: string
+  type: string
+  security: string
+  quantity: number | null
+  price: number | null
+  amount: number
+  status: 'valid' | 'needs_review' | 'missing_data'
+  confidence: number
+  originalText: string
+  normalizedJson: Record<string, unknown>
+  validationErrors: string[]
+  aiReasoning: string
+  iserror?: boolean
+  errordesc?: string | null
+  filename?: string
+  checkno?: string | null
+}
+
+export interface JobTransactionsResponse {
+  job_id: string
+  status: string
+  original_file_name?: string
+  entity_id: number
+  entity_name: string
+  user_id: number
+  total: number
+  valid: number
+  errors: number
+  transactions: ReviewTransaction[]
+}
+
+export async function getJobTransactions(
+  jobId: string,
+): Promise<JobTransactionsResponse> {
+  const res = await fetch(
+    `${API_BASE}/job/${encodeURIComponent(jobId)}/transactions`,
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail ||
+        `Failed to load transactions (${res.status})`,
+    )
+  }
+  return res.json() as Promise<JobTransactionsResponse>
+}
+
 export function downloadCsvUrl(jobId: string): string {
   return `${API_BASE}/job/${encodeURIComponent(jobId)}/download/csv`
 }

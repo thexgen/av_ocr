@@ -42,9 +42,11 @@ const STAGE_HINTS: Record<string, number> = {
   DETECT: 1,
   EXTRACT: 2,
   MAP: 4,
+  CANONICALIZE: 5,
   NORMALIZE: 5,
   VALIDATE_ROWS: 6,
   PERSIST: 7,
+  DB_STAGE: 7,
   FAILED: 8,
 }
 
@@ -114,7 +116,11 @@ export function ProcessingPage() {
               result: status,
             }),
           )
-          window.setTimeout(() => navigate('/success'), 700)
+          // Successful extracts go to Review (temp-table staging list).
+          // Failures still land on Success so the error summary is visible.
+          const next =
+            status.status === 'FAILED' ? '/success' : '/review'
+          window.setTimeout(() => navigate(next), 700)
           return
         }
 

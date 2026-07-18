@@ -50,7 +50,7 @@ class ProcessingEngine:
             cfg("placeholders", "default_user_id", default="USER_LOCAL_001")
         )
         document_type = str(
-            cfg("processing", "document_type", default="Holding Statement")
+            cfg("processing", "document_type", default="Bank Statement")
         )
 
         ext = Path(original_file_name).suffix.lower()
@@ -165,7 +165,7 @@ class ProcessingEngine:
             except Exception:  # noqa: BLE001
                 validation_summary = None
 
-        csv_path, json_path = self._find_artifact_paths(job_id)
+        artifacts = self._find_artifact_paths(job_id)
 
         duration = history.processing_duration_ms
         duration_sec = None
@@ -175,9 +175,14 @@ class ProcessingEngine:
         return {
             "job_id": job_id,
             "status": history.processing_status,
+            "document_type": history.document_type,
             "validation_summary": validation_summary,
-            "csv_path": csv_path,
-            "json_path": json_path,
+            "canonical_json_path": artifacts.get("canonical_json"),
+            "transaction_csv_path": artifacts.get("transaction_csv"),
+            "cash_csv_path": artifacts.get("cash_csv"),
+            # Backward-compatible aliases
+            "csv_path": artifacts.get("transaction_csv"),
+            "json_path": artifacts.get("canonical_json"),
             "processing_duration_ms": duration,
             "processing_duration": (
                 f"{duration_sec} sec" if duration_sec is not None else None
@@ -187,20 +192,25 @@ class ProcessingEngine:
             "error_message": history.error_message,
         }
 
-    def _find_artifact_paths(self, job_id: str) -> tuple[str | None, str | None]:
+    def _find_artifact_paths(self, job_id: str) -> dict[str, str | None]:
         prefix = f"{OUTPUT_PREFIX}/{job_id}/"
-        csv_path = None
-        json_path = None
+        found: dict[str, str | None] = {
+            "canonical_json": None,
+            "transaction_csv": None,
+            "cash_csv": None,
+        }
         try:
             for key in self.storage.list_keys(prefix):
                 name = key.rsplit("/", 1)[-1]
-                if name.startswith("holding_") and name.endswith(".csv"):
-                    csv_path = key
-                elif name.startswith("holding_") and name.endswith(".json"):
-                    json_path = key
+                if name == "canonical_transactions.json":
+                    found["canonical_json"] = key
+                elif name.startswith("TRANSACTION_") and name.endswith(".csv"):
+                    found["transaction_csv"] = key
+                elif name.startswith("CASH_") and name.endswith(".csv"):
+                    found["cash_csv"] = key
         except Exception:  # noqa: BLE001
             pass
-        return csv_path, json_path
+        return found
 
     def _build_history(
         self,

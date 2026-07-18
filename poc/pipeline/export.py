@@ -1,67 +1,31 @@
+"""
+Pipeline export façade.
+
+Debug artifacts stay here; final business exports live in poc.export
+(canonical JSON + TRANSACTION/CASH CSVs). Holdings CSV is no longer produced.
+"""
+
 from __future__ import annotations
 
-import csv
-import io
 import json
 import logging
-from datetime import datetime
 from typing import Any
 
-from poc.config import OUTPUT_PREFIX, STANDARD_SCHEMA
+from poc.config import OUTPUT_PREFIX
+from poc.export.canonical import CanonicalTransaction
+from poc.export.persist import date_stamp, persist_canonical_and_csvs
+from poc.export.schemas import DOCUMENT_TYPE_BANK_STATEMENT
 from poc.interfaces.storage import StorageService
 from poc.pipeline.mapping_dictionary import build_mapping_analysis
 
 logger = logging.getLogger("holding_engine")
 
-
-def date_stamp(asof_hint: str | None = None) -> str:
-    """Prefer statement date as YYYYMMDD; else today."""
-    if asof_hint:
-        text = asof_hint.strip()
-        for sep in ("-", "/", "."):
-            parts = text.split(sep)
-            if len(parts) == 3 and len(parts[0]) == 4 and parts[0].isdigit():
-                y, m, d = parts
-                if len(m) <= 2 and len(d) <= 2:
-                    return f"{y}{int(m):02d}{int(d):02d}"
-        for sep in ("/", "-", "."):
-            parts = text.split(sep)
-            if len(parts) == 3 and len(parts[2]) == 4 and parts[2].isdigit():
-                d, m, y = parts
-                if d.isdigit() and m.isdigit():
-                    return f"{y}{int(m):02d}{int(d):02d}"
-    return datetime.now().strftime("%Y%m%d")
-
-
-def build_normalized_json_payload(
-    records: list[dict[str, Any]],
-    mapping_response: dict[str, Any],
-    extraction_info: dict[str, Any],
-    *,
-    job_id: str,
-) -> dict[str, Any]:
-    return {
-        "job_id": job_id,
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "extraction": extraction_info,
-        "mapping": {
-            k: v for k, v in mapping_response.items() if not str(k).startswith("_")
-        },
-        "mapper": mapping_response.get("_mapper"),
-        "record_count": len(records),
-        "records": records,
-    }
-
-
-def build_holding_csv_text(records: list[dict[str, Any]]) -> str:
-    buf = io.StringIO()
-    writer = csv.DictWriter(buf, fieldnames=STANDARD_SCHEMA, extrasaction="ignore")
-    writer.writeheader()
-    for row in records:
-        writer.writerow(
-            {k: row.get(k) if row.get(k) is not None else "" for k in STANDARD_SCHEMA}
-        )
-    return buf.getvalue()
+# Re-export for callers that imported date_stamp from this module
+__all__ = [
+    "date_stamp",
+    "persist_extraction_debug_outputs",
+    "persist_outputs",
+]
 
 
 def persist_extraction_debug_outputs(
@@ -108,29 +72,24 @@ def persist_extraction_debug_outputs(
 
 def persist_outputs(
     storage: StorageService,
-    records: list[dict[str, Any]],
-    mapping_response: dict[str, Any],
-    extraction_info: dict[str, Any],
     *,
     job_id: str,
+    transactions: list[CanonicalTransaction],
+    mapping_response: dict[str, Any],
+    extraction_info: dict[str, Any],
+    document_type: str = DOCUMENT_TYPE_BANK_STATEMENT,
     asof_hint: str | None = None,
 ) -> dict[str, str]:
     """
-    Persist JSON + CSV via StorageService under output/{job_id}/.
+    Persist canonical_transactions.json then TRANSACTION_*.csv and CASH_*.csv.
+    Generators read only from the canonical transaction list.
     """
-    stamp = date_stamp(asof_hint)
-    base = f"{OUTPUT_PREFIX}/{job_id}"
-    json_key = f"{base}/holding_{stamp}.json"
-    csv_key = f"{base}/holding_{stamp}.csv"
-
-    payload = build_normalized_json_payload(
-        records, mapping_response, extraction_info, job_id=job_id
+    return persist_canonical_and_csvs(
+        storage,
+        job_id=job_id,
+        transactions=transactions,
+        extraction_info=extraction_info,
+        mapping_response=mapping_response,
+        document_type=document_type,
+        asof_hint=asof_hint,
     )
-    json_text = json.dumps(payload, indent=2, ensure_ascii=False)
-    csv_text = build_holding_csv_text(records)
-
-    storage.write_text(json_key, json_text)
-    storage.write_text(csv_key, csv_text)
-
-    logger.info("Persisted outputs | json=%s csv=%s", json_key, csv_key)
-    return {"json_key": json_key, "csv_key": csv_key, "output_prefix": base}
