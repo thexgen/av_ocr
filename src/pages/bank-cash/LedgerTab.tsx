@@ -1,0 +1,227 @@
+import { useMemo, useState } from 'react'
+import { motion } from 'framer-motion'
+import { Filter, Search } from 'lucide-react'
+import { Button, GlassCard } from '../../components/ui/GlassCard'
+import { ENTITIES, MOCK_LEDGER, type LedgerRow } from '../../data/bankCashMock'
+
+function formatMoney(n: number) {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    maximumFractionDigits: 2,
+  }).format(n)
+}
+
+function formatDate(iso: string) {
+  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  })
+}
+
+export function LedgerTab() {
+  const [entityId, setEntityId] = useState(ENTITIES[0].id)
+  const [accountId, setAccountId] = useState(ENTITIES[0].accounts[0].id)
+  const [fromDate, setFromDate] = useState('2026-06-01')
+  const [toDate, setToDate] = useState('2026-06-30')
+  const [query, setQuery] = useState('')
+  const [fetched, setFetched] = useState(true)
+  const [applied, setApplied] = useState({
+    entityId: ENTITIES[0].id,
+    accountId: ENTITIES[0].accounts[0].id,
+    fromDate: '2026-06-01',
+    toDate: '2026-06-30',
+  })
+
+  const entity = ENTITIES.find((e) => e.id === entityId) ?? ENTITIES[0]
+  const accounts = entity.accounts
+
+  const rows = useMemo(() => {
+    if (!fetched) return [] as LedgerRow[]
+    return MOCK_LEDGER.filter((r) => {
+      if (r.entityId !== applied.entityId) return false
+      if (applied.accountId !== 'all' && r.accountId !== applied.accountId) return false
+      if (r.tradeDate < applied.fromDate || r.tradeDate > applied.toDate) return false
+      const q = query.toLowerCase()
+      if (
+        q &&
+        !r.description.toLowerCase().includes(q) &&
+        !r.checkNo.toLowerCase().includes(q) &&
+        !r.type.toLowerCase().includes(q)
+      ) {
+        return false
+      }
+      return true
+    })
+  }, [applied, fetched, query])
+
+  const onEntityChange = (id: string) => {
+    setEntityId(id)
+    const next = ENTITIES.find((e) => e.id === id)
+    setAccountId(next?.accounts[0]?.id ?? 'all')
+  }
+
+  const onFetch = () => {
+    setApplied({ entityId, accountId, fromDate, toDate })
+    setFetched(true)
+  }
+
+  return (
+    <div className="space-y-5">
+      <GlassCard className="p-4 sm:p-5" delay={0.05}>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Entity
+            </span>
+            <select
+              value={entityId}
+              onChange={(e) => onEntityChange(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-navy-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
+            >
+              {ENTITIES.map((e) => (
+                <option key={e.id} value={e.id}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              Account
+            </span>
+            <select
+              value={accountId}
+              onChange={(e) => setAccountId(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-navy-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
+            >
+              <option value="all">All accounts</option>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              From
+            </span>
+            <input
+              type="date"
+              value={fromDate}
+              onChange={(e) => setFromDate(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-navy-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
+            />
+          </label>
+
+          <label className="block space-y-1.5">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+              To
+            </span>
+            <input
+              type="date"
+              value={toDate}
+              onChange={(e) => setToDate(e.target.value)}
+              className="w-full rounded-xl border border-white/10 bg-navy-950/60 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
+            />
+          </label>
+
+          <div className="flex items-end">
+            <Button className="w-full" onClick={onFetch}>
+              Fetch
+            </Button>
+          </div>
+        </div>
+      </GlassCard>
+
+      <GlassCard className="overflow-hidden" delay={0.1}>
+        <div className="flex flex-col gap-3 border-b border-white/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="relative flex-1 sm:max-w-xs">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search description, cheque, type…"
+              className="w-full rounded-xl border border-white/10 bg-navy-950/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
+            />
+          </div>
+          <div className="flex items-center gap-2 text-xs text-slate-500">
+            <Filter className="h-3.5 w-3.5" />
+            {rows.length} ledger rows
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[960px] text-left text-sm">
+            <thead>
+              <tr className="border-b border-white/5 text-[11px] uppercase tracking-wider text-slate-500">
+                <th className="px-4 py-3 font-semibold">Date</th>
+                <th className="px-3 py-3 font-semibold">Entity</th>
+                <th className="px-3 py-3 font-semibold">Account</th>
+                <th className="px-3 py-3 font-semibold">Type</th>
+                <th className="px-3 py-3 font-semibold">Description</th>
+                <th className="px-3 py-3 font-semibold">Instrument</th>
+                <th className="px-3 py-3 font-semibold text-right">Amount</th>
+                <th className="px-3 py-3 font-semibold text-right">Balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((row, i) => (
+                <motion.tr
+                  key={row.id}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(i, 16) * 0.025 }}
+                  className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
+                >
+                  <td className="px-4 py-3 font-mono text-xs text-slate-300">
+                    {formatDate(row.tradeDate)}
+                  </td>
+                  <td className="px-3 py-3 text-slate-300">{row.entityName}</td>
+                  <td className="px-3 py-3 text-xs text-slate-400">{row.accountLabel}</td>
+                  <td className="px-3 py-3">
+                    <span
+                      className={`rounded-md px-2 py-0.5 text-xs font-medium ${
+                        row.type === 'Credit'
+                          ? 'bg-valid/15 text-green-400'
+                          : 'bg-error/15 text-red-300'
+                      }`}
+                    >
+                      {row.type}
+                    </span>
+                  </td>
+                  <td className="max-w-[240px] truncate px-3 py-3 font-medium text-slate-100">
+                    {row.description}
+                  </td>
+                  <td className="px-3 py-3 font-mono text-xs text-slate-400">
+                    {row.checkNo}
+                  </td>
+                  <td
+                    className={`px-3 py-3 text-right font-mono text-xs font-semibold ${
+                      row.amount < 0 ? 'text-red-300' : 'text-green-300'
+                    }`}
+                  >
+                    {formatMoney(row.amount)}
+                  </td>
+                  <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
+                    {formatMoney(row.balance)}
+                  </td>
+                </motion.tr>
+              ))}
+            </tbody>
+          </table>
+
+          {rows.length === 0 && (
+            <div className="px-5 py-16 text-center text-sm text-slate-500">
+              No ledger rows for this filter. Adjust dates or click Fetch.
+            </div>
+          )}
+        </div>
+      </GlassCard>
+    </div>
+  )
+}

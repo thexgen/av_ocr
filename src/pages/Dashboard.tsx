@@ -83,9 +83,9 @@ export function Dashboard() {
           </p>
         </motion.div>
 
-        <Link to="/upload">
+        <Link to="/transactions/bank-cash?tab=upload">
           <Button size="lg" icon={Upload} className="w-full sm:w-auto">
-            Upload Statement
+            Upload Bank Statement
           </Button>
         </Link>
       </div>
@@ -134,10 +134,10 @@ export function Dashboard() {
               <p className="text-xs text-slate-500">Latest statement processing activity</p>
             </div>
             <Link
-              to="/review"
+              to="/transactions/bank-cash"
               className="text-xs font-semibold text-accent-400 hover:text-accent-400/80"
             >
-              View all
+              Bank Cash
             </Link>
           </div>
 
