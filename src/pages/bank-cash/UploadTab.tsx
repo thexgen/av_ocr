@@ -24,9 +24,13 @@ import {
   AlertTriangle,
   XCircle,
   Filter,
-  Search,
 } from 'lucide-react'
 import { Button, GlassCard } from '../../components/ui/GlassCard'
+import {
+  DEFAULT_PAGE_SIZE,
+  TablePagination,
+  paginateSlice,
+} from '../../components/ui/TablePagination'
 import { TransactionDrawer } from '../../components/TransactionDrawer'
 import { ACCEPTED_EXTENSIONS, MAX_FILE_SIZE, processingSteps } from '../../data/mockData'
 import { ENTITIES } from '../../data/bankCashMock'
@@ -163,7 +167,7 @@ function toTransaction(row: ReviewTransaction): Transaction {
   }
 }
 
-export function UploadTab() {
+export function UploadTab({ query }: { query: string }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const existing = useMemo(() => loadJobMeta(), [])
 
@@ -185,7 +189,7 @@ export function UploadTab() {
   const [selected, setSelected] = useState<Transaction | null>(null)
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [filter, setFilter] = useState<'all' | TransactionStatus>('all')
-  const [query, setQuery] = useState('')
+  const [page, setPage] = useState(1)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [stagingLoading, setStagingLoading] = useState(false)
   const [stagingError, setStagingError] = useState<string | null>(null)
@@ -378,19 +382,28 @@ export function UploadTab() {
     })
   }, [filter, query, transactions])
 
-  const allChecked = filtered.length > 0 && filtered.every((t) => checked.has(t.id))
+  useEffect(() => {
+    setPage(1)
+  }, [query, filter, transactions.length])
+
+  const pageRows = useMemo(
+    () => paginateSlice(filtered, page, DEFAULT_PAGE_SIZE),
+    [filtered, page],
+  )
+
+  const allChecked = pageRows.length > 0 && pageRows.every((t) => checked.has(t.id))
 
   const toggleAll = () => {
     if (allChecked) {
       setChecked((prev) => {
         const next = new Set(prev)
-        filtered.forEach((t) => next.delete(t.id))
+        pageRows.forEach((t) => next.delete(t.id))
         return next
       })
     } else {
       setChecked((prev) => {
         const next = new Set(prev)
-        filtered.forEach((t) => next.add(t.id))
+        pageRows.forEach((t) => next.add(t.id))
         return next
       })
     }
@@ -942,16 +955,7 @@ export function UploadTab() {
             </div>
 
             <GlassCard className="overflow-hidden" delay={0.08}>
-              <div className="flex flex-col gap-3 border-b border-white/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="relative flex-1 sm:max-w-xs">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-                  <input
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    placeholder="Search description, type, date, error…"
-                    className="w-full rounded-xl border border-white/10 bg-navy-950/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
-                  />
-                </div>
+              <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
                 <div className="flex items-center gap-2 text-xs text-slate-500">
                   {stagingLoading ? (
                     <>
@@ -991,7 +995,7 @@ export function UploadTab() {
                   </thead>
                   <tbody>
                     {!stagingLoading &&
-                      filtered.map((txn, i) => {
+                      pageRows.map((txn, i) => {
                         const metaRow = statusMeta[txn.status]
                         const StatusIcon = metaRow.icon
                         return (
@@ -1069,6 +1073,14 @@ export function UploadTab() {
                   </div>
                 )}
               </div>
+
+              {!stagingLoading && (
+                <TablePagination
+                  page={page}
+                  total={filtered.length}
+                  onPageChange={setPage}
+                />
+              )}
             </GlassCard>
 
             <TransactionDrawer

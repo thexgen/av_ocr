@@ -39,6 +39,35 @@ _MONTHS = {
     "dec": 12,
 }
 
+# Matches bankcashtemp VARCHAR limits (MySQL error 1406 if exceeded).
+_COL_LIMITS = {
+    "uploadbatchid": 64,
+    "jobid": 64,
+    "description": 1000,
+    "instrumentno": 100,
+    "voucher": 100,
+    "comments": 1000,
+    "usercomments": 1000,
+    "filename": 255,
+    "feedtransactionid": 100,
+    "syncdescription": 500,
+    "checkno": 100,
+    "memo": 1000,
+    "billdotcomdoc": 255,
+    "txncustomfxcurrency": 10,
+    "errordesc": 2000,
+}
+
+
+def _clip(value: Any, column: str) -> Any:
+    if value is None:
+        return None
+    limit = _COL_LIMITS.get(column)
+    text = str(value)
+    if limit is None or len(text) <= limit:
+        return text
+    return text[:limit]
+
 
 def parse_transaction_date(raw: str | None) -> date | None:
     text = (raw or "").strip()
@@ -173,13 +202,14 @@ def validate_and_build_temp_row(
 
     description = txn.security_description or txn.description
     checkno = txn.check_number or txn.security_id
+    memo = txn.description if txn.description != description else None
 
     is_error = 1 if errors else 0
     error_desc = ", ".join(errors) if errors else None
 
     return {
-        "uploadbatchid": uploadbatchid or job_id,
-        "jobid": job_id,
+        "uploadbatchid": _clip(uploadbatchid or job_id, "uploadbatchid"),
+        "jobid": _clip(job_id, "jobid"),
         "rowno": rowno,
         "entityid": defaults.entity_id,
         "accountid": None,
@@ -188,8 +218,8 @@ def validate_and_build_temp_row(
         "payeepayorid": None,
         "ledgerid": None,
         "amount": amount,
-        "description": description,
-        "instrumentno": checkno,
+        "description": _clip(description, "description"),
+        "instrumentno": _clip(checkno, "instrumentno"),
         "positionid": None,
         "positiontagid": None,
         "accountrecon": 0,
@@ -198,14 +228,14 @@ def validate_and_build_temp_row(
         "oldstatusid": None,
         "comments": None,
         "usercomments": None,
-        "filename": filename,
-        "feedtransactionid": txn.unique_transaction_id,
-        "syncdescription": type_label,
+        "filename": _clip(filename, "filename"),
+        "feedtransactionid": _clip(txn.unique_transaction_id, "feedtransactionid"),
+        "syncdescription": _clip(type_label, "syncdescription"),
         "userid": defaults.user_id,
         "oldid": None,
         "ismultidistributed": 0,
-        "checkno": checkno,
-        "memo": txn.description if txn.description != description else None,
+        "checkno": _clip(checkno, "checkno"),
+        "memo": _clip(memo, "memo"),
         "checkbookid": None,
         "voidtransactiondate": None,
         "createdby": defaults.user_id,
@@ -215,9 +245,11 @@ def validate_and_build_temp_row(
         "consider_return_computation": 0,
         "feedid": None,
         "billdotcomdoc": None,
-        "txncustomfxcurrency": txn.currency_code or txn.currency_local,
+        "txncustomfxcurrency": _clip(
+            txn.currency_code or txn.currency_local, "txncustomfxcurrency"
+        ),
         "iserror": is_error,
-        "errordesc": error_desc,
+        "errordesc": _clip(error_desc, "errordesc"),
         # Not inserted — used by API mapping only
         "_type_label": type_label or "",
     }

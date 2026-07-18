@@ -1,7 +1,12 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Filter, Search } from 'lucide-react'
+import { Filter } from 'lucide-react'
 import { Button, GlassCard } from '../../components/ui/GlassCard'
+import {
+  DEFAULT_PAGE_SIZE,
+  TablePagination,
+  paginateSlice,
+} from '../../components/ui/TablePagination'
 import { ENTITIES, MOCK_LEDGER, type LedgerRow } from '../../data/bankCashMock'
 
 function formatMoney(n: number) {
@@ -20,13 +25,13 @@ function formatDate(iso: string) {
   })
 }
 
-export function LedgerTab() {
+export function LedgerTab({ query }: { query: string }) {
   const [entityId, setEntityId] = useState(ENTITIES[0].id)
   const [accountId, setAccountId] = useState(ENTITIES[0].accounts[0].id)
   const [fromDate, setFromDate] = useState('2026-06-01')
   const [toDate, setToDate] = useState('2026-06-30')
-  const [query, setQuery] = useState('')
   const [fetched, setFetched] = useState(true)
+  const [page, setPage] = useState(1)
   const [applied, setApplied] = useState({
     entityId: ENTITIES[0].id,
     accountId: ENTITIES[0].accounts[0].id,
@@ -48,13 +53,23 @@ export function LedgerTab() {
         q &&
         !r.description.toLowerCase().includes(q) &&
         !r.checkNo.toLowerCase().includes(q) &&
-        !r.type.toLowerCase().includes(q)
+        !r.type.toLowerCase().includes(q) &&
+        !r.entityName.toLowerCase().includes(q)
       ) {
         return false
       }
       return true
     })
   }, [applied, fetched, query])
+
+  useEffect(() => {
+    setPage(1)
+  }, [query, applied])
+
+  const pageRows = useMemo(
+    () => paginateSlice(rows, page, DEFAULT_PAGE_SIZE),
+    [rows, page],
+  )
 
   const onEntityChange = (id: string) => {
     setEntityId(id)
@@ -65,6 +80,7 @@ export function LedgerTab() {
   const onFetch = () => {
     setApplied({ entityId, accountId, fromDate, toDate })
     setFetched(true)
+    setPage(1)
   }
 
   return (
@@ -139,16 +155,7 @@ export function LedgerTab() {
       </GlassCard>
 
       <GlassCard className="overflow-hidden" delay={0.1}>
-        <div className="flex flex-col gap-3 border-b border-white/5 px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="relative flex-1 sm:max-w-xs">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search description, cheque, type…"
-              className="w-full rounded-xl border border-white/10 bg-navy-950/60 py-2 pl-9 pr-3 text-sm text-slate-200 placeholder:text-slate-600 outline-none focus:border-accent-400/40 focus:ring-1 focus:ring-accent-400/30"
-            />
-          </div>
+        <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Filter className="h-3.5 w-3.5" />
             {rows.length} ledger rows
@@ -170,7 +177,7 @@ export function LedgerTab() {
               </tr>
             </thead>
             <tbody>
-              {rows.map((row, i) => (
+              {pageRows.map((row, i) => (
                 <motion.tr
                   key={row.id}
                   initial={{ opacity: 0, y: 6 }}
@@ -221,6 +228,12 @@ export function LedgerTab() {
             </div>
           )}
         </div>
+
+        <TablePagination
+          page={page}
+          total={rows.length}
+          onPageChange={setPage}
+        />
       </GlassCard>
     </div>
   )
