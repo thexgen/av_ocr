@@ -6,14 +6,23 @@ from typing import Annotated
 from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from poc.api.deps import get_engine
 from poc.config import OUTPUT_PREFIX
-from poc.db.bankcash_repository import fetch_temp_transactions_by_job
+from poc.db.bankcash_repository import (
+    delete_temp_rows,
+    fetch_temp_transactions_by_job,
+    process_temp_rows,
+)
 from poc.db.connection import DatabaseError, ping_database
 from poc.db.settings import get_staging_defaults
 from poc.exceptions import ProcessingError, UnsupportedDocumentError
 from poc.logging_setup import setup_logging
+
+
+class TempRowIdsBody(BaseModel):
+    ids: list[int | str] = Field(default_factory=list)
 
 logger = logging.getLogger("holding_engine")
 
@@ -112,6 +121,31 @@ def create_app() -> FastAPI:
             "errors": error_count,
             "transactions": transactions,
         }
+
+    @app.post("/job/{job_id}/transactions/delete")
+    def delete_job_transactions(job_id: str, body: TempRowIdsBody) -> dict:
+        """Delete selected rows from bankcashtemp for this job."""
+        engine = get_engine()
+        if engine.get_job(job_id) is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        try:
+            return delete_temp_rows(job_id=job_id, ids=body.ids)
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
+
+    @app.post("/job/{job_id}/transactions/process")
+    def process_job_transactions(job_id: str, body: TempRowIdsBody) -> dict:
+        """
+        Post selected clean rows to bankcash; skip iserror=1 rows.
+        Processed rows are removed from bankcashtemp.
+        """
+        engine = get_engine()
+        if engine.get_job(job_id) is None:
+            raise HTTPException(status_code=404, detail=f"Job not found: {job_id}")
+        try:
+            return process_temp_rows(job_id=job_id, ids=body.ids)
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
 
     @app.get("/job/{job_id}/download/csv")
     def download_csv(job_id: str) -> Response:

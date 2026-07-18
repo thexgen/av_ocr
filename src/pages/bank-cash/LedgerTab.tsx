@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Filter } from 'lucide-react'
+import { Filter, Trash2 } from 'lucide-react'
 import { Button, GlassCard } from '../../components/ui/GlassCard'
 import {
   DEFAULT_PAGE_SIZE,
@@ -32,6 +32,8 @@ export function LedgerTab({ query }: { query: string }) {
   const [toDate, setToDate] = useState('2026-06-30')
   const [fetched, setFetched] = useState(true)
   const [page, setPage] = useState(1)
+  const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>(() => [...MOCK_LEDGER])
+  const [checked, setChecked] = useState<Set<string>>(new Set())
   const [applied, setApplied] = useState({
     entityId: ENTITIES[0].id,
     accountId: ENTITIES[0].accounts[0].id,
@@ -44,7 +46,7 @@ export function LedgerTab({ query }: { query: string }) {
 
   const rows = useMemo(() => {
     if (!fetched) return [] as LedgerRow[]
-    return MOCK_LEDGER.filter((r) => {
+    return ledgerRows.filter((r) => {
       if (r.entityId !== applied.entityId) return false
       if (applied.accountId !== 'all' && r.accountId !== applied.accountId) return false
       if (r.tradeDate < applied.fromDate || r.tradeDate > applied.toDate) return false
@@ -60,7 +62,7 @@ export function LedgerTab({ query }: { query: string }) {
       }
       return true
     })
-  }, [applied, fetched, query])
+  }, [applied, fetched, query, ledgerRows])
 
   useEffect(() => {
     setPage(1)
@@ -70,6 +72,40 @@ export function LedgerTab({ query }: { query: string }) {
     () => paginateSlice(rows, page, DEFAULT_PAGE_SIZE),
     [rows, page],
   )
+
+  const allChecked =
+    pageRows.length > 0 && pageRows.every((r) => checked.has(r.id))
+
+  const toggleAll = () => {
+    if (allChecked) {
+      setChecked((prev) => {
+        const next = new Set(prev)
+        pageRows.forEach((r) => next.delete(r.id))
+        return next
+      })
+    } else {
+      setChecked((prev) => {
+        const next = new Set(prev)
+        pageRows.forEach((r) => next.add(r.id))
+        return next
+      })
+    }
+  }
+
+  const toggleOne = (id: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const onDeleteSelected = () => {
+    if (checked.size === 0) return
+    setLedgerRows((prev) => prev.filter((r) => !checked.has(r.id)))
+    setChecked(new Set())
+  }
 
   const onEntityChange = (id: string) => {
     setEntityId(id)
@@ -81,6 +117,7 @@ export function LedgerTab({ query }: { query: string }) {
     setApplied({ entityId, accountId, fromDate, toDate })
     setFetched(true)
     setPage(1)
+    setChecked(new Set())
   }
 
   return (
@@ -155,18 +192,38 @@ export function LedgerTab({ query }: { query: string }) {
       </GlassCard>
 
       <GlassCard className="overflow-hidden" delay={0.1}>
-        <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+        <div className="flex items-center justify-between gap-3 border-b border-white/5 px-4 py-3">
           <div className="flex items-center gap-2 text-xs text-slate-500">
             <Filter className="h-3.5 w-3.5" />
             {rows.length} ledger rows
           </div>
+          {checked.size > 0 && (
+            <button
+              type="button"
+              onClick={onDeleteSelected}
+              title={`Delete ${checked.size} selected`}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-error/30 bg-error/15 text-red-300 transition-colors hover:bg-error/25"
+              aria-label={`Delete ${checked.size} selected`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[960px] text-left text-sm">
             <thead>
               <tr className="border-b border-white/5 text-[11px] uppercase tracking-wider text-slate-500">
-                <th className="px-4 py-3 font-semibold">Date</th>
+                <th className="px-4 py-3 font-semibold">
+                  <input
+                    type="checkbox"
+                    checked={allChecked}
+                    onChange={toggleAll}
+                    className="h-3.5 w-3.5 rounded border-slate-600 bg-navy-800 accent-accent-500"
+                    aria-label="Select all"
+                  />
+                </th>
+                <th className="px-3 py-3 font-semibold">Date</th>
                 <th className="px-3 py-3 font-semibold">Entity</th>
                 <th className="px-3 py-3 font-semibold">Account</th>
                 <th className="px-3 py-3 font-semibold">Type</th>
@@ -185,6 +242,15 @@ export function LedgerTab({ query }: { query: string }) {
                   transition={{ delay: Math.min(i, 16) * 0.025 }}
                   className="border-b border-white/[0.03] transition-colors hover:bg-white/[0.02]"
                 >
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      checked={checked.has(row.id)}
+                      onChange={() => toggleOne(row.id)}
+                      className="h-3.5 w-3.5 rounded border-slate-600 bg-navy-800 accent-accent-500"
+                      aria-label={`Select ${row.id}`}
+                    />
+                  </td>
                   <td className="px-4 py-3 font-mono text-xs text-slate-300">
                     {formatDate(row.tradeDate)}
                   </td>

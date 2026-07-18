@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   Upload,
@@ -24,6 +23,8 @@ import {
   AlertTriangle,
   XCircle,
   Filter,
+  Trash2,
+  Play,
 } from 'lucide-react'
 import { Button, GlassCard } from '../../components/ui/GlassCard'
 import {
@@ -35,10 +36,12 @@ import { TransactionDrawer } from '../../components/TransactionDrawer'
 import { ACCEPTED_EXTENSIONS, MAX_FILE_SIZE, processingSteps } from '../../data/mockData'
 import { ENTITIES } from '../../data/bankCashMock'
 import {
+  deleteJobTransactions,
   getJobStatus,
   getJobTransactions,
   isTerminalStatus,
   JOB_STORAGE_KEY,
+  processJobTransactions,
   uploadHoldingFile,
   type JobStatusResponse,
   type ReviewTransaction,
@@ -108,11 +111,6 @@ function formatMoney(n: number) {
     currency: 'INR',
     maximumFractionDigits: 2,
   }).format(n)
-}
-
-function formatNum(n: number | null) {
-  if (n === null) return '—'
-  return n.toLocaleString('en-US', { maximumFractionDigits: 4 })
 }
 
 function validateFile(file: File): string | null {
@@ -193,8 +191,8 @@ export function UploadTab({ query }: { query: string }) {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [stagingLoading, setStagingLoading] = useState(false)
   const [stagingError, setStagingError] = useState<string | null>(null)
-  const [entityName, setEntityName] = useState(ENTITIES[0].name)
-  const [fileName, setFileName] = useState(existing?.fileName ?? '')
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
 
   const addFiles = useCallback((list: FileList | File[]) => {
     const incoming = Array.from(list)
@@ -258,8 +256,6 @@ export function UploadTab({ query }: { query: string }) {
       )
       sessionStorage.setItem('importFiles', JSON.stringify([target.file.name]))
       setJobMeta(meta)
-      setFileName(target.file.name)
-      setEntityName(ENTITIES.find((e) => e.id === entityId)?.name ?? 'Krishna Deval')
       setActiveIndex(0)
       setProgress(8)
       setProcessError(null)
@@ -353,8 +349,6 @@ export function UploadTab({ query }: { query: string }) {
         const data = await getJobTransactions(jobMeta.jobId)
         if (cancelled) return
         setTransactions(data.transactions.map(toTransaction))
-        setEntityName(data.entity_name || ENTITIES[0].name)
-        if (data.original_file_name) setFileName(data.original_file_name)
       } catch (err) {
         if (cancelled) return
         setStagingError(err instanceof Error ? err.message : 'Failed to load transactions')
@@ -433,49 +427,69 @@ export function UploadTab({ query }: { query: string }) {
     setChecked(new Set())
     setJob(null)
     setJobMeta(null)
+    setActionMsg(null)
+  }
+
+  const reloadStaging = async () => {
+    if (!jobMeta?.jobId) return
+    const data = await getJobTransactions(jobMeta.jobId)
+    setTransactions(data.transactions.map(toTransaction))
+  }
+
+  const onDeleteSelected = async () => {
+    if (!jobMeta?.jobId || checked.size === 0 || actionBusy) return
+    setActionBusy(true)
+    setActionMsg(null)
+    try {
+      const ids = Array.from(checked)
+      const res = await deleteJobTransactions(jobMeta.jobId, ids)
+      await reloadStaging()
+      setChecked(new Set())
+      setActionMsg(`Deleted ${res.deleted ?? ids.length} transaction(s).`)
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : 'Delete failed')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const onProcessSelected = async () => {
+    if (!jobMeta?.jobId || checked.size === 0 || actionBusy) return
+    const selected = transactions.filter((t) => checked.has(t.id))
+    const cleanIds = selected
+      .filter((t) => !t.iserror && t.status !== 'missing_data')
+      .map((t) => t.id)
+    const skipCount = selected.length - cleanIds.length
+
+    if (cleanIds.length === 0) {
+      setActionMsg(
+        'No error-free transactions selected. Fix errors or select valid rows to process.',
+      )
+      return
+    }
+
+    setActionBusy(true)
+    setActionMsg(null)
+    try {
+      const res = await processJobTransactions(jobMeta.jobId, Array.from(checked))
+      await reloadStaging()
+      setChecked(new Set())
+      const processed = res.processed ?? cleanIds.length
+      const skipped = res.skipped_errors ?? skipCount
+      setActionMsg(
+        skipped > 0
+          ? `Processed ${processed} transaction(s). Skipped ${skipped} with errors.`
+          : `Processed ${processed} transaction(s) into bankcash.`,
+      )
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : 'Process failed')
+    } finally {
+      setActionBusy(false)
+    }
   }
 
   return (
     <div className="space-y-5">
-      {/* Phase pills */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        {(
-          [
-            ['upload', '1. Upload'],
-            ['processing', '2. Process'],
-            ['staging', '3. Staging review'],
-          ] as const
-        ).map(([key, text]) => {
-          const active = phase === key
-          const done =
-            (key === 'upload' && (phase === 'processing' || phase === 'staging')) ||
-            (key === 'processing' && phase === 'staging')
-          return (
-            <span
-              key={key}
-              className={`rounded-full border px-3 py-1 font-semibold ${
-                active
-                  ? 'border-accent-400/40 bg-accent-500/20 text-accent-400'
-                  : done
-                    ? 'border-valid/25 bg-valid/10 text-green-400/90'
-                    : 'border-white/10 text-slate-500'
-              }`}
-            >
-              {text}
-            </span>
-          )
-        })}
-        {phase !== 'upload' && (
-          <button
-            type="button"
-            onClick={resetToUpload}
-            className="ml-auto text-xs font-semibold text-accent-400 hover:text-accent-400/80"
-          >
-            Upload another
-          </button>
-        )}
-      </div>
-
       <AnimatePresence mode="wait">
         {phase === 'upload' && (
           <motion.div
@@ -885,35 +899,6 @@ export function UploadTab({ query }: { query: string }) {
             exit={{ opacity: 0, y: -8 }}
             className="space-y-5"
           >
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-              <div>
-                <h2 className="text-lg font-bold text-white">Staging review</h2>
-                <p className="mt-1 text-sm text-slate-400">
-                  Staged in <span className="text-slate-300">bankcashtemp</span>
-                  {fileName ? (
-                    <>
-                      {' '}
-                      · <span className="font-medium text-accent-400">{fileName}</span>
-                    </>
-                  ) : null}
-                  {' '}
-                  · Entity: <span className="text-slate-300">{entityName}</span>
-                  {jobMeta?.jobId ? (
-                    <>
-                      {' '}
-                      ·{' '}
-                      <span className="font-mono text-xs text-slate-500">{jobMeta.jobId}</span>
-                    </>
-                  ) : null}
-                </p>
-              </div>
-              <Link to="/success">
-                <Button icon={ArrowRight}>
-                  Confirm Import ({checked.size || filtered.length})
-                </Button>
-              </Link>
-            </div>
-
             {stagingError && (
               <div className="flex items-start gap-2 rounded-xl border border-error/30 bg-error/10 px-4 py-3 text-sm text-red-300">
                 <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
@@ -930,7 +915,13 @@ export function UploadTab({ query }: { query: string }) {
               </div>
             )}
 
-            <div className="flex flex-wrap gap-2">
+            {actionMsg && (
+              <div className="rounded-xl border border-accent-400/20 bg-accent-500/10 px-4 py-2.5 text-sm text-slate-200">
+                {actionMsg}
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
               {(
                 [
                   ['all', `All (${transactions.length})`],
@@ -952,6 +943,32 @@ export function UploadTab({ query }: { query: string }) {
                   {text}
                 </button>
               ))}
+              <div className="ml-auto flex flex-wrap items-center gap-2">
+                {checked.size > 0 && (
+                  <>
+                    <Button
+                      size="sm"
+                      variant="danger"
+                      icon={actionBusy ? Loader2 : Trash2}
+                      disabled={actionBusy}
+                      onClick={() => void onDeleteSelected()}
+                    >
+                      Delete ({checked.size})
+                    </Button>
+                    <Button
+                      size="sm"
+                      icon={actionBusy ? Loader2 : Play}
+                      disabled={actionBusy}
+                      onClick={() => void onProcessSelected()}
+                    >
+                      Process
+                    </Button>
+                  </>
+                )}
+                <Button size="sm" icon={Upload} onClick={resetToUpload}>
+                  Upload
+                </Button>
+              </div>
             </div>
 
             <GlassCard className="overflow-hidden" delay={0.08}>
@@ -971,7 +988,7 @@ export function UploadTab({ query }: { query: string }) {
               </div>
 
               <div className="overflow-x-auto">
-                <table className="w-full min-w-[900px] text-left text-sm">
+                <table className="w-full min-w-[720px] text-left text-sm">
                   <thead>
                     <tr className="border-b border-white/5 text-[11px] uppercase tracking-wider text-slate-500">
                       <th className="px-4 py-3 font-semibold">
@@ -986,8 +1003,6 @@ export function UploadTab({ query }: { query: string }) {
                       <th className="px-3 py-3 font-semibold">Trade Date</th>
                       <th className="px-3 py-3 font-semibold">Type</th>
                       <th className="px-3 py-3 font-semibold">Description</th>
-                      <th className="px-3 py-3 font-semibold text-right">Quantity</th>
-                      <th className="px-3 py-3 font-semibold text-right">Price</th>
                       <th className="px-3 py-3 font-semibold text-right">Amount</th>
                       <th className="px-3 py-3 font-semibold">Status</th>
                       <th className="px-3 py-3 font-semibold">Errors</th>
@@ -1027,14 +1042,8 @@ export function UploadTab({ query }: { query: string }) {
                                 {txn.type}
                               </span>
                             </td>
-                            <td className="max-w-[260px] truncate px-3 py-3 font-medium text-slate-100">
+                            <td className="max-w-[320px] truncate px-3 py-3 font-medium text-slate-100">
                               {txn.security}
-                            </td>
-                            <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
-                              {formatNum(txn.quantity)}
-                            </td>
-                            <td className="px-3 py-3 text-right font-mono text-xs text-slate-300">
-                              {txn.price !== null ? formatMoney(txn.price) : '—'}
                             </td>
                             <td
                               className={`px-3 py-3 text-right font-mono text-xs font-semibold ${

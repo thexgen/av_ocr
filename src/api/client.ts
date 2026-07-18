@@ -140,6 +140,46 @@ export async function getJobTransactions(
   return res.json() as Promise<JobTransactionsResponse>
 }
 
+export interface TempRowsActionResponse {
+  job_id: string
+  deleted?: number
+  requested?: number
+  processed?: number
+  skipped_errors?: number
+  deleted_from_temp?: number
+}
+
+async function postTempRowIds(
+  jobId: string,
+  action: 'delete' | 'process',
+  ids: string[],
+): Promise<TempRowsActionResponse> {
+  const res = await fetch(
+    `${API_BASE}/job/${encodeURIComponent(jobId)}/transactions/${action}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids }),
+    },
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail ||
+        `Failed to ${action} transactions (${res.status})`,
+    )
+  }
+  return res.json() as Promise<TempRowsActionResponse>
+}
+
+export function deleteJobTransactions(jobId: string, ids: string[]) {
+  return postTempRowIds(jobId, 'delete', ids)
+}
+
+export function processJobTransactions(jobId: string, ids: string[]) {
+  return postTempRowIds(jobId, 'process', ids)
+}
+
 export function downloadCsvUrl(jobId: string): string {
   return `${API_BASE}/job/${encodeURIComponent(jobId)}/download/csv`
 }

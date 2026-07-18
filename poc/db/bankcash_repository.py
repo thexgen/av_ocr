@@ -223,3 +223,159 @@ def fetch_temp_transactions_by_job(job_id: str) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+_MAIN_INSERT_COLUMNS = [
+    "entityid",
+    "accountid",
+    "transactiontypeid",
+    "transactiondate",
+    "payeepayorid",
+    "ledgerid",
+    "amount",
+    "description",
+    "instrumentno",
+    "positionid",
+    "positiontagid",
+    "accountrecon",
+    "voucher",
+    "statusid",
+    "oldstatusid",
+    "comments",
+    "usercomments",
+    "filename",
+    "feedtransactionid",
+    "syncdescription",
+    "userid",
+    "oldid",
+    "ismultidistributed",
+    "checkno",
+    "memo",
+    "checkbookid",
+    "voidtransactiondate",
+    "createdby",
+    "updatedby",
+    "txnfxrate",
+    "payeeid",
+    "consider_return_computation",
+    "feedid",
+    "billdotcomdoc",
+    "txncustomfxcurrency",
+]
+
+
+def _normalize_ids(ids: list[int | str]) -> list[int]:
+    out: list[int] = []
+    for raw in ids:
+        try:
+            out.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def delete_temp_rows(*, job_id: str, ids: list[int | str]) -> dict[str, Any]:
+    """Delete selected staging rows for a job."""
+    id_list = _normalize_ids(ids)
+    if not id_list:
+        return {"job_id": job_id, "deleted": 0}
+
+    placeholders = ", ".join(["%s"] * len(id_list))
+    sql = (
+        f"DELETE FROM `bankcashtemp` WHERE `jobid` = %s AND `id` IN ({placeholders})"
+    )
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (job_id, *id_list))
+                deleted = cur.rowcount
+    except DatabaseError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise DatabaseError(
+            f"Failed to delete bankcashtemp rows for job {job_id}: {exc}"
+        ) from exc
+
+    logger.info("Deleted bankcashtemp rows | job=%s deleted=%s", job_id, deleted)
+    return {"job_id": job_id, "deleted": deleted}
+
+
+def process_temp_rows(*, job_id: str, ids: list[int | str]) -> dict[str, Any]:
+    """
+    Post clean selected rows from bankcashtemp → bankcash, then remove them from temp.
+
+    Rows with iserror=1 are skipped (never posted).
+    """
+    id_list = _normalize_ids(ids)
+    if not id_list:
+        return {
+            "job_id": job_id,
+            "requested": 0,
+            "processed": 0,
+            "skipped_errors": 0,
+            "deleted_from_temp": 0,
+        }
+
+    placeholders = ", ".join(["%s"] * len(id_list))
+    select_sql = f"""
+        SELECT *
+        FROM `bankcashtemp`
+        WHERE `jobid` = %s AND `id` IN ({placeholders})
+    """
+    insert_placeholders = ", ".join([f"%({c})s" for c in _MAIN_INSERT_COLUMNS])
+    col_sql = ", ".join(f"`{c}`" for c in _MAIN_INSERT_COLUMNS)
+    insert_sql = f"INSERT INTO `bankcash` ({col_sql}) VALUES ({insert_placeholders})"
+
+    rows: list[dict[str, Any]] = []
+    clean: list[dict[str, Any]] = []
+    skipped = 0
+    deleted = 0
+
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(select_sql, (job_id, *id_list))
+                rows = list(cur.fetchall() or [])
+
+                clean = [r for r in rows if int(r.get("iserror") or 0) == 0]
+                skipped = len(rows) - len(clean)
+
+                if clean:
+                    payload = []
+                    for row in clean:
+                        item = {c: row.get(c) for c in _MAIN_INSERT_COLUMNS}
+                        if item.get("createdby") is None:
+                            item["createdby"] = row.get("userid")
+                        if item.get("updatedby") is None:
+                            item["updatedby"] = row.get("userid")
+                        payload.append(item)
+                    cur.executemany(insert_sql, payload)
+
+                    clean_ids = [int(r["id"]) for r in clean]
+                    del_ph = ", ".join(["%s"] * len(clean_ids))
+                    cur.execute(
+                        f"DELETE FROM `bankcashtemp` WHERE `jobid` = %s AND `id` IN ({del_ph})",
+                        (job_id, *clean_ids),
+                    )
+                    deleted = cur.rowcount
+    except DatabaseError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        raise DatabaseError(
+            f"Failed to process bankcashtemp rows for job {job_id}: {exc}"
+        ) from exc
+
+    logger.info(
+        "Processed bankcashtemp → bankcash | job=%s requested=%s processed=%s skipped=%s",
+        job_id,
+        len(id_list),
+        len(clean),
+        skipped,
+    )
+    return {
+        "job_id": job_id,
+        "requested": len(id_list),
+        "processed": len(clean),
+        "skipped_errors": skipped,
+        "deleted_from_temp": deleted,
+    }
