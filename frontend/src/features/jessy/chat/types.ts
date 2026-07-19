@@ -2,6 +2,22 @@ export type ChatRole = 'user' | 'assistant' | 'system'
 
 export type ChatAttachmentKind = 'pdf' | 'xlsx' | 'image' | 'other'
 
+export type ChatMessageVariant =
+  | 'text'
+  | 'info'
+  | 'success'
+  | 'warning'
+  | 'error'
+  | 'upload'
+  | 'processing'
+
+export type ChatProgressStepStatus =
+  | 'pending'
+  | 'running'
+  | 'done'
+  | 'error'
+  | 'skipped'
+
 export interface ChatAttachment {
   id: string
   name: string
@@ -14,6 +30,30 @@ export interface ChatAttachment {
   file?: File
 }
 
+export interface ChatProgressStep {
+  key: string
+  label: string
+  status: ChatProgressStepStatus | string
+  detail?: string | null
+}
+
+export interface ChatUploadSummary {
+  title?: string
+  vehicle?: string | null
+  transactionsFound?: number
+  successful?: number
+  validationErrors?: number
+  status?: string
+  jobId?: string | null
+  fileName?: string
+}
+
+export interface ChatValidationIssue {
+  label: string
+  count: number
+  details?: string[]
+}
+
 export interface ChatMessage {
   id: number
   role: ChatRole
@@ -21,6 +61,12 @@ export interface ChatMessage {
   sources?: string[]
   attachments?: ChatAttachment[]
   createdAt: Date
+  /** Presentation-only fields (client-side; history APIs keep `content`). */
+  variant?: ChatMessageVariant
+  progressSteps?: ChatProgressStep[]
+  uploadSummary?: ChatUploadSummary | null
+  validationIssues?: ChatValidationIssue[]
+  footerNote?: string
 }
 
 export interface Conversation {
@@ -46,6 +92,18 @@ export interface ChatAttachmentProgressStep {
   detail?: string | null
 }
 
+export interface ChatAttachmentFileResult {
+  status?: string
+  job_id?: string | null
+  vehicle_type?: string | null
+  file_name?: string
+  rows_staged?: number
+  clean_rows?: number
+  error_rows?: number
+  message?: string
+  steps?: ChatAttachmentProgressStep[]
+}
+
 export interface ChatAttachmentsApiResponse {
   status: string
   files_received: number
@@ -59,5 +117,8 @@ export interface ChatAttachmentsApiResponse {
   job_id?: string | null
   vehicle_type?: string | null
   rows_staged?: number
+  clean_rows?: number
+  error_rows?: number
   redirect_to?: string | null
+  files?: ChatAttachmentFileResult[]
 }

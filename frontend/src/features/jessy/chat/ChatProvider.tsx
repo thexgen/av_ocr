@@ -22,10 +22,21 @@ import {
   validateChatFile,
 } from './attachments'
 import type { ChatAttachment, ChatMessage, Conversation } from './types'
+import {
+  buildUploadSummary,
+  buildValidationIssues,
+  finalizeProgressSteps,
+  inferVariantFromStatus,
+  revealProgressSteps,
+  stepsToPlainText,
+} from './utils/messagePresentation'
+
+const STEP_REVEAL_MS = 900
 
 const WELCOME: ChatMessage = {
   id: 0,
   role: 'assistant',
+  variant: 'info',
   content: 'Hello! I am Jessy. Ask me anything from the knowledge repository.',
   createdAt: new Date(),
 }
@@ -233,6 +244,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           {
             id: progressId,
             role: 'assistant',
+            variant: 'processing',
             content: 'Uploading file…',
             createdAt: new Date(),
           },
@@ -244,53 +256,81 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           activeConversationId,
         )
 
-        const steps = uploadResult.steps ?? []
+        // Stop typing dots once structured progress takes over
+        setIsTyping(false)
+
+        const steps = (uploadResult.steps ?? []).map((step) => ({
+          key: step.key,
+          label: step.label,
+          status: step.status,
+          detail: step.detail,
+        }))
+        const uploadSummary = buildUploadSummary(uploadResult)
+        const validationIssues = buildValidationIssues(uploadResult)
+        const variant = inferVariantFromStatus(uploadResult.status)
+
         if (steps.length > 0) {
-          let built = ''
-          for (const step of steps) {
-            const mark =
-              step.status === 'done'
-                ? '✓'
-                : step.status === 'error'
-                  ? '✗'
-                  : step.status === 'skipped'
-                    ? '·'
-                    : '…'
-            const line = step.detail
-              ? `${mark} ${step.label} — ${step.detail}`
-              : `${mark} ${step.label}`
-            built = built ? `${built}\n${line}` : line
+          for (let i = 0; i < steps.length; i += 1) {
+            const revealed = revealProgressSteps(steps, i)
             setMessages((previous) =>
               previous.map((m) =>
-                m.id === progressId ? { ...m, content: built } : m,
+                m.id === progressId
+                  ? {
+                      ...m,
+                      variant: 'processing',
+                      content: stepsToPlainText(revealed),
+                      progressSteps: revealed,
+                      uploadSummary: null,
+                      validationIssues: undefined,
+                      footerNote: undefined,
+                    }
+                  : m,
               ),
             )
-            await new Promise((r) => setTimeout(r, 350))
+            await new Promise((r) => setTimeout(r, STEP_REVEAL_MS))
           }
-        } else {
-          const names =
-            uploadResult.file_names && uploadResult.file_names.length > 0
-              ? uploadResult.file_names.join(', ')
-              : uploadResult.file_name
-          setMessages((previous) =>
-            previous.map((m) =>
-              m.id === progressId
-                ? {
-                    ...m,
-                    content:
-                      uploadResult.summary ||
-                      uploadResult.progress_text ||
-                      `Received ${uploadResult.files_received} file(s): ${names}`,
-                  }
-                : m,
-            ),
-          )
         }
 
-        // Open the matching Upload screen with temp / processing view
+        const finalSteps =
+          steps.length > 0 ? finalizeProgressSteps(steps) : undefined
+        const names =
+          uploadResult.file_names && uploadResult.file_names.length > 0
+            ? uploadResult.file_names.join(', ')
+            : uploadResult.file_name
+        // Keep a plain-text fallback for history; UI prefers structured blocks.
+        const fallbackContent =
+          (finalSteps ? stepsToPlainText(finalSteps) : '') ||
+          uploadResult.summary ||
+          uploadResult.progress_text ||
+          `Received ${uploadResult.files_received} file(s): ${names}`
+
         const redirect = uploadResult.redirect_to
         const jobId = uploadResult.job_id
         const vType = uploadResult.vehicle_type
+        const footerNote = redirect
+          ? vType === 'bank-cash'
+            ? 'Opening Bank Cash Upload for progress + temp transactions…'
+            : 'Opening Upload screen with temp transactions…'
+          : undefined
+
+        setMessages((previous) =>
+          previous.map((m) =>
+            m.id === progressId
+              ? {
+                  ...m,
+                  variant,
+                  content: fallbackContent,
+                  progressSteps: finalSteps,
+                  uploadSummary,
+                  validationIssues:
+                    validationIssues.length > 0 ? validationIssues : undefined,
+                  footerNote,
+                }
+              : m,
+          ),
+        )
+
+        // Open the matching Upload screen with temp / processing view
         if (redirect) {
           if (vType === 'bank-cash' && jobId) {
             sessionStorage.setItem(
@@ -310,17 +350,6 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               }),
             )
           }
-          const note =
-            vType === 'bank-cash'
-              ? '\n\nOpening Bank Cash Upload for progress + temp transactions…'
-              : '\n\nOpening Upload screen with temp transactions…'
-          setMessages((previous) =>
-            previous.map((m) =>
-              m.id === progressId
-                ? { ...m, content: `${m.content}${note}` }
-                : m,
-            ),
-          )
           navigate(redirect)
         }
         return
@@ -361,6 +390,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         {
           id: response.assistant_message_id ?? Date.now() + 1,
           role: 'assistant',
+          variant: 'info',
           content: response.answer,
           sources: response.sources,
           createdAt: new Date(),
@@ -378,6 +408,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         {
           id: Date.now() + 1,
           role: 'assistant',
+          variant: 'error',
           content: detail,
           createdAt: new Date(),
         },

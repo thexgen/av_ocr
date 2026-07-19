@@ -200,6 +200,21 @@ body {
   background: rgba(96, 165, 250, 0.4);
 }
 
+/* Jessy chat markdown */
+.jessy-md {
+  word-break: break-word;
+}
+
+.jessy-md-table {
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 0.65rem;
+  background: rgba(5, 8, 16, 0.35);
+}
+
+.jessy-md-table table {
+  margin: 0;
+}
+
 /* Table row status */
 .row-valid {
   background: rgba(34, 197, 94, 0.06);

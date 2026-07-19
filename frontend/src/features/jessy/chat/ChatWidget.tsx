@@ -27,7 +27,8 @@ import {
   formatBytes,
 } from './attachments'
 import { useChat } from './ChatProvider'
-import type { ChatAttachment, ChatMessage } from './types'
+import { MessageBubble } from './components/MessageBubble'
+import type { ChatAttachment } from './types'
 
 type WindowMode = 'docked' | 'fullscreen'
 type ResizeEdge = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
@@ -502,65 +503,5 @@ export function ChatWidget() {
         )}
       </div>
     </>
-  )
-}
-
-function MessageBubble({
-  message,
-  wide,
-}: {
-  message: ChatMessage
-  wide?: boolean
-}) {
-  const isUser = message.role === 'user'
-  return (
-    <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
-      <div
-        className={`rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed ${
-          wide ? 'max-w-[720px]' : 'max-w-[85%]'
-        } ${
-          isUser
-            ? 'rounded-br-md bg-gradient-to-br from-accent-600 to-accent-500 text-white shadow-[0_0_20px_rgba(37,99,235,0.25)]'
-            : 'rounded-bl-md border border-cyan-400/15 bg-white/[0.05] text-slate-200 shadow-[0_0_16px_rgba(34,211,238,0.06)] backdrop-blur-sm'
-        }`}
-      >
-        {message.attachments && message.attachments.length > 0 && (
-          <ul className="mb-2 flex flex-col gap-1.5">
-            {message.attachments.map((file) => (
-              <li
-                key={file.id}
-                className={`inline-flex items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] ${
-                  isUser ? 'bg-white/10' : 'bg-white/[0.04]'
-                }`}
-              >
-                {file.previewUrl ? (
-                  <img
-                    src={file.previewUrl}
-                    alt={file.name}
-                    className="h-10 w-10 rounded object-cover"
-                  />
-                ) : (
-                  <AttachmentIcon kind={file.kind} />
-                )}
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{file.name}</span>
-                  <span className={isUser ? 'text-white/60' : 'text-slate-500'}>
-                    {formatBytes(file.size)}
-                  </span>
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
-        {message.content && (
-          <div className="whitespace-pre-wrap">{message.content}</div>
-        )}
-        {message.sources && message.sources.length > 0 && (
-          <div className="mt-2 border-t border-white/10 pt-2 text-[11px] text-cyan-200/60">
-            Sources: {message.sources.join(', ')}
-          </div>
-        )}
-      </div>
-    </div>
   )
 }
