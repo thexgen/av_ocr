@@ -57,9 +57,24 @@ export const navigation: NavItem[] = [
     icon: ArrowLeftRight,
     children: [
       { id: 'bank-cash', label: 'Bank Cash', path: '/transactions/bank-cash', icon: Landmark },
-      { id: 'mutual-fund', label: 'Mutual Fund', icon: PieChart, soon: true },
-      { id: 'fixed-income', label: 'Fixed Income', icon: Coins, soon: true },
-      { id: 'direct-equity', label: 'Direct Equity', icon: TrendingUp, soon: true },
+      {
+        id: 'mutual-fund',
+        label: 'Mutual Fund',
+        path: '/transactions/mutual-fund',
+        icon: PieChart,
+      },
+      {
+        id: 'fixed-income',
+        label: 'Fixed Income',
+        path: '/transactions/fixed-income',
+        icon: Coins,
+      },
+      {
+        id: 'direct-equity',
+        label: 'Direct Equity',
+        path: '/transactions/direct-equity',
+        icon: TrendingUp,
+      },
       { id: 'real-estate', label: 'Real Estate', icon: Building2, soon: true },
       { id: 'txn-sync', label: 'Transaction Sync', icon: RefreshCw, soon: true },
     ],

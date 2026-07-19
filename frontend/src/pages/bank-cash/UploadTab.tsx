@@ -130,15 +130,24 @@ function validateFile(file: File): string | null {
   return null
 }
 
-function loadJobMeta(): { jobId: string; fileName: string } | null {
+function loadJobMeta(): {
+  jobId: string
+  fileName: string
+  status?: string
+} | null {
   try {
     const raw = sessionStorage.getItem(JOB_STORAGE_KEY)
     if (!raw) return null
-    const parsed = JSON.parse(raw) as { jobId?: string; fileName?: string }
+    const parsed = JSON.parse(raw) as {
+      jobId?: string
+      fileName?: string
+      status?: string
+    }
     if (!parsed.jobId) return null
     return {
       jobId: parsed.jobId,
       fileName: parsed.fileName || 'statement.pdf',
+      status: parsed.status,
     }
   } catch {
     return null
@@ -169,7 +178,18 @@ export function UploadTab({ query }: { query: string }) {
   const inputRef = useRef<HTMLInputElement>(null)
   const existing = useMemo(() => loadJobMeta(), [])
 
-  const [phase, setPhase] = useState<Phase>(() => (existing?.jobId ? 'staging' : 'upload'))
+  const [phase, setPhase] = useState<Phase>(() => {
+    if (!existing?.jobId) return 'upload'
+    // Chat / fresh jobs may still be processing when this screen opens
+    if (
+      existing.status === 'PROCESSING' ||
+      existing.status === 'QUEUED' ||
+      existing.status === 'processing'
+    ) {
+      return 'processing'
+    }
+    return 'staging'
+  })
   const [entityId, setEntityId] = useState(ENTITIES[0].id)
   const [dragging, setDragging] = useState(false)
   const [files, setFiles] = useState<UploadFile[]>([])

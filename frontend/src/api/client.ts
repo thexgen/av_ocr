@@ -189,3 +189,94 @@ export function downloadJsonUrl(jobId: string): string {
 }
 
 export const JOB_STORAGE_KEY = 'holdingJob'
+
+export interface VehicleProgressStep {
+  key: string
+  label: string
+  status: string
+  detail?: string | null
+}
+
+export interface VehicleUploadResponse {
+  status: string
+  job_id?: string | null
+  vehicle_type?: string | null
+  file_name?: string
+  rows_staged?: number
+  clean_rows?: number
+  error_rows?: number
+  steps?: VehicleProgressStep[]
+  message?: string
+  warning?: string
+  redirect_to?: string | null
+}
+
+export async function uploadVehicleFile(
+  file: File,
+  vehicle: string,
+): Promise<VehicleUploadResponse> {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('vehicle', vehicle)
+  const res = await fetch(`${API_BASE}/vehicle/upload`, {
+    method: 'POST',
+    body: form,
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail || `Vehicle upload failed (${res.status})`,
+    )
+  }
+  return res.json() as Promise<VehicleUploadResponse>
+}
+
+export interface VehicleStagingRow {
+  id: string
+  jobId?: string | null
+  entityId: string
+  entityName: string
+  folioOrIsin: string
+  tradeDate: string
+  type: string
+  schemeOrInstrument: string
+  units: number
+  navOrPrice: number
+  amount: number
+  iserror?: boolean
+  errordesc?: string | null
+  filename?: string | null
+}
+
+export async function fetchVehicleStaging(
+  vehicle: string,
+  options?: {
+    jobId?: string
+    limit?: number
+  },
+): Promise<VehicleStagingRow[]> {
+  const params = new URLSearchParams()
+  if (options?.jobId) params.set('job_id', options.jobId)
+  if (options?.limit) params.set('limit', String(options.limit))
+  const qs = params.toString()
+  const res = await fetch(
+    `${API_BASE}/vehicle/${encodeURIComponent(vehicle)}/staging${qs ? `?${qs}` : ''}`,
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail ||
+        `Failed to load ${vehicle} staging (${res.status})`,
+    )
+  }
+  const data = (await res.json()) as { transactions?: VehicleStagingRow[] }
+  return data.transactions ?? []
+}
+
+/** @deprecated use fetchVehicleStaging('mutual-fund', …) */
+export function fetchMutualFundStaging(options?: {
+  jobId?: string
+  limit?: number
+}): Promise<VehicleStagingRow[]> {
+  return fetchVehicleStaging('mutual-fund', options)
+}

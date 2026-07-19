@@ -16,11 +16,19 @@ from backend.db.bankcash_repository import (
     process_temp_rows,
 )
 from backend.db.connection import DatabaseError, ping_database
+from backend.db.mutualfund_repository import (
+    ensure_mutualfundtemp_columns,
+    fetch_mf_temp_by_job,
+    fetch_recent_mf_temp,
+)
 from backend.db.settings import get_staging_defaults
+from backend.db.vehicle_staging import ensure_vehicle_staging_tables, fetch_vehicle_temp
 from backend.exceptions import ProcessingError, UnsupportedDocumentError
+from backend.jessy.db import ensure_jessy_tables
 from backend.jessy.router import router as jessy_router
 from backend.jessy.utils.qdrant_client import initialize_qdrant
 from backend.logging_setup import setup_logging
+from backend.vehicle.pipeline import process_vehicle_attachment
 
 
 class TempRowIdsBody(BaseModel):
@@ -45,17 +53,26 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # Jessy routes: /chat, /search, /documents/upload
+    # Jessy routes: /chat, /chat/attachments, /search, /documents/upload
     # (Vite strips /api prefix, so frontend calls /api/chat → /chat here)
     app.include_router(jessy_router)
 
     @app.on_event("startup")
     def _startup_jessy() -> None:
-        """Best-effort Qdrant init — statement OCR still works if Qdrant is down."""
+        """Best-effort Jessy init — OCR still works if Qdrant/MySQL chat tables fail."""
         try:
             initialize_qdrant()
         except Exception as exc:  # noqa: BLE001
             logger.warning("Jessy Qdrant startup skipped: %s", exc)
+        try:
+            ensure_jessy_tables()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Jessy chat tables startup skipped: %s", exc)
+        try:
+            ensure_mutualfundtemp_columns()
+            ensure_vehicle_staging_tables()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("vehicle staging ensure skipped: %s", exc)
 
     @app.get("/health")
     def health() -> dict:
@@ -169,7 +186,136 @@ def create_app() -> FastAPI:
     def download_json(job_id: str) -> Response:
         return _download_artifact(job_id, kind="json")
 
+    @app.post("/vehicle/upload")
+    async def upload_vehicle(
+        background_tasks: BackgroundTasks,
+        file: Annotated[UploadFile, File(description="Vehicle Excel or bank PDF")],
+        vehicle: Annotated[str | None, Form()] = "mutual-fund",
+    ) -> dict:
+        """Upload MF / FI / DE Excel (or bank PDF) and stage temp transactions."""
+        original_name = file.filename or "upload.xls"
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Empty file upload")
+
+        outcome = process_vehicle_attachment(
+            content=content,
+            filename=original_name,
+            expect_vehicle=vehicle,
+        )
+        if outcome.get("needs_background_process") and outcome.get("job_id"):
+            background_tasks.add_task(_run_job, str(outcome["job_id"]))
+        if vehicle and outcome.get("vehicle_type") and outcome["vehicle_type"] != vehicle:
+            outcome["warning"] = (
+                f"Selected tab is {vehicle}, but file looks like "
+                f"{outcome['vehicle_type']}."
+            )
+        if outcome.get("status") == "failed":
+            raise HTTPException(
+                status_code=400, detail=outcome.get("message") or "Import failed"
+            )
+        return outcome
+
+    @app.get("/vehicle/{vehicle}/staging")
+    def list_vehicle_staging(
+        vehicle: str,
+        job_id: str | None = None,
+        limit: int = 200,
+    ) -> dict:
+        """List staged temp rows for mutual-fund / fixed-income / direct-equity."""
+        defaults = get_staging_defaults()
+        try:
+            if vehicle == "mutual-fund":
+                rows = (
+                    fetch_mf_temp_by_job(job_id)
+                    if job_id
+                    else fetch_recent_mf_temp(limit=max(1, min(limit, 500)))
+                )
+                transactions = _map_mf_staging_rows(rows, defaults)
+            elif vehicle in {"fixed-income", "direct-equity"}:
+                rows = fetch_vehicle_temp(
+                    vehicle,
+                    job_id=job_id,
+                    limit=max(1, min(limit, 500)),
+                )
+                transactions = _map_vehicle_staging_rows(rows, defaults)
+            else:
+                raise HTTPException(status_code=404, detail=f"Unknown vehicle: {vehicle}")
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
+
+        return {
+            "total": len(transactions),
+            "vehicle": vehicle,
+            "entity_id": defaults.entity_id,
+            "entity_name": defaults.entity_name,
+            "transactions": transactions,
+        }
+
     return app
+
+
+def _map_mf_staging_rows(rows: list, defaults) -> list[dict]:
+    transactions = []
+    for row in rows:
+        sync = str(row.get("syncdescription") or "")
+        parts = [p.strip() for p in sync.split("|")]
+        scheme = parts[0] if parts else ""
+        folio = str(row.get("voucher") or (parts[1] if len(parts) > 1 else ""))
+        txn_type = str(
+            row.get("txnqualifier") or (parts[2] if len(parts) > 2 else "-")
+        )
+        trade = row.get("transactiondate")
+        transactions.append(
+            {
+                "id": str(row.get("id")),
+                "jobId": row.get("jobid"),
+                "entityId": str(row.get("entityid") or defaults.entity_id),
+                "entityName": defaults.entity_name,
+                "folioOrIsin": folio,
+                "tradeDate": trade.isoformat()
+                if hasattr(trade, "isoformat")
+                else str(trade or ""),
+                "type": txn_type,
+                "schemeOrInstrument": scheme,
+                "units": float(row["units"]) if row.get("units") is not None else 0,
+                "navOrPrice": float(row["navperunit"])
+                if row.get("navperunit") is not None
+                else 0,
+                "amount": float(row["amount"]) if row.get("amount") is not None else 0,
+                "iserror": bool(row.get("iserror")),
+                "errordesc": row.get("errordesc"),
+                "filename": row.get("filename"),
+            }
+        )
+    return transactions
+
+
+def _map_vehicle_staging_rows(rows: list, defaults) -> list[dict]:
+    transactions = []
+    for row in rows:
+        trade = row.get("transactiondate")
+        transactions.append(
+            {
+                "id": str(row.get("id")),
+                "jobId": row.get("jobid"),
+                "entityId": str(row.get("entityid") or defaults.entity_id),
+                "entityName": defaults.entity_name,
+                "folioOrIsin": str(row.get("isin") or ""),
+                "tradeDate": trade.isoformat()
+                if hasattr(trade, "isoformat")
+                else str(trade or ""),
+                "type": str(row.get("txnqualifier") or "-"),
+                "schemeOrInstrument": str(row.get("security_name") or ""),
+                "units": float(row["units"]) if row.get("units") is not None else 0,
+                "navOrPrice": float(row["price"]) if row.get("price") is not None else 0,
+                "amount": float(row["amount"]) if row.get("amount") is not None else 0,
+                "iserror": bool(row.get("iserror")),
+                "errordesc": row.get("errordesc"),
+                "filename": row.get("filename"),
+            }
+        )
+    return transactions
 
 
 def _download_artifact(job_id: str, *, kind: str) -> Response:

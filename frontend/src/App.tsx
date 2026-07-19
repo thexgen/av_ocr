@@ -3,6 +3,9 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { AppLayout } from './components/layout/AppLayout'
 import { Dashboard } from './pages/Dashboard'
 import { BankCashPage } from './pages/BankCash'
+import { MutualFundPage } from './pages/MutualFund'
+import { FixedIncomePage } from './pages/FixedIncome'
+import { DirectEquityPage } from './pages/DirectEquity'
 import { SuccessPage } from './pages/Success'
 import { KnowledgeRepositoryPage } from './pages/KnowledgeRepository'
 import { isAdmin } from './config/flags'
@@ -19,6 +22,9 @@ export default function App() {
         <Route element={<AppLayout />}>
           <Route index element={<Dashboard />} />
           <Route path="transactions/bank-cash" element={<BankCashPage />} />
+          <Route path="transactions/mutual-fund" element={<MutualFundPage />} />
+          <Route path="transactions/fixed-income" element={<FixedIncomePage />} />
+          <Route path="transactions/direct-equity" element={<DirectEquityPage />} />
           <Route
             path="settings/knowledge-repository"
             element={
