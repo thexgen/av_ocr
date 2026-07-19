@@ -212,7 +212,7 @@ def validate_and_build_temp_row(
         "jobid": _clip(job_id, "jobid"),
         "rowno": rowno,
         "entityid": defaults.entity_id,
-        "accountid": None,
+        "accountid": defaults.account_id,
         "transactiontypeid": type_id,
         "transactiondate": txn_date,
         "payeepayorid": None,

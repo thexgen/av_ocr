@@ -31,6 +31,9 @@ class StagingDefaults:
     entity_id: int
     entity_name: str
     user_id: int
+    """Account id used while filters/UI account masters are still wired up."""
+    account_id: int
+    account_label: str
 
 
 def get_mysql_settings() -> MySQLSettings:
@@ -53,6 +56,9 @@ def get_staging_defaults() -> StagingDefaults:
         entity_name=os.getenv("DEFAULT_ENTITY_NAME", "Krishna Deval").strip()
         or "Krishna Deval",
         user_id=int(os.getenv("DEFAULT_USER_ID", "1")),
+        account_id=int(os.getenv("DEFAULT_ACCOUNT_ID", "101")),
+        account_label=os.getenv("DEFAULT_ACCOUNT_LABEL", "Account · 101").strip()
+        or "Account · 101",
     )
 
 

@@ -18,30 +18,12 @@ export type LedgerRow = {
   balance: number
 }
 
+/** Dev filter IDs match DEFAULT_ENTITY_ID / DEFAULT_ACCOUNT_ID in the backend. */
 export const ENTITIES: EntityOption[] = [
   {
-    id: 'ent-1',
+    id: '1',
     name: 'Krishna Deval',
-    accounts: [
-      { id: 'acc-kd-1', label: 'HDFC · ****3343 Savings' },
-      { id: 'acc-kd-2', label: 'ICICI · ****9066 Current' },
-    ],
-  },
-  {
-    id: 'ent-2',
-    name: 'Aryan Dev',
-    accounts: [
-      { id: 'acc-ad-1', label: 'Kotak · ****8821 Savings' },
-      { id: 'acc-ad-2', label: 'Axis · ****4410 Salary' },
-    ],
-  },
-  {
-    id: 'ent-3',
-    name: 'Jessy Deval',
-    accounts: [
-      { id: 'acc-jd-1', label: 'SBI · ****2290 Savings' },
-      { id: 'acc-jd-2', label: 'Yes Bank · ****1188 Current' },
-    ],
+    accounts: [{ id: '101', label: 'Account · 101' }],
   },
 ]
 

@@ -6,10 +6,14 @@ import {
   CheckCircle2,
   FileUp,
   Loader2,
+  Play,
+  Trash2,
   Upload,
 } from 'lucide-react'
 import {
+  deleteVehicleStaging,
   fetchVehicleStaging,
+  processVehicleStaging,
   uploadVehicleFile,
   type VehicleStagingRow,
   type VehicleUploadResponse,
@@ -99,6 +103,9 @@ export function VehicleUploadTab({
   const [loadingRows, setLoadingRows] = useState(false)
   const [page, setPage] = useState(1)
   const [uploading, setUploading] = useState(false)
+  const [checked, setChecked] = useState<Set<string>>(new Set())
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionMsg, setActionMsg] = useState<string | null>(null)
 
   const loadStaging = useCallback(
     async (id: string | null) => {
@@ -196,6 +203,8 @@ export function VehicleUploadTab({
     setRows([])
     setProgressLines([])
     setError(null)
+    setChecked(new Set())
+    setActionMsg(null)
     setPhase('idle')
     setParams({ tab: 'upload' }, { replace: true })
   }
@@ -204,6 +213,84 @@ export function VehicleUploadTab({
     () => paginateSlice(rows, page, DEFAULT_PAGE_SIZE),
     [rows, page],
   )
+
+  const allChecked =
+    pageRows.length > 0 && pageRows.every((r) => checked.has(r.id))
+
+  const toggleAll = () => {
+    if (allChecked) {
+      setChecked((prev) => {
+        const next = new Set(prev)
+        pageRows.forEach((r) => next.delete(r.id))
+        return next
+      })
+    } else {
+      setChecked((prev) => {
+        const next = new Set(prev)
+        pageRows.forEach((r) => next.add(r.id))
+        return next
+      })
+    }
+  }
+
+  const toggleOne = (id: string) => {
+    setChecked((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const onDeleteSelected = async () => {
+    if (!jobId || checked.size === 0 || actionBusy) return
+    setActionBusy(true)
+    setActionMsg(null)
+    try {
+      const ids = Array.from(checked)
+      const res = await deleteVehicleStaging(vehicle, jobId, ids)
+      await loadStaging(jobId)
+      setChecked(new Set())
+      setActionMsg(`Deleted ${res.deleted ?? ids.length} transaction(s).`)
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : 'Delete failed')
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const onProcessSelected = async () => {
+    if (!jobId || checked.size === 0 || actionBusy) return
+    const selected = rows.filter((r) => checked.has(r.id))
+    const cleanIds = selected.filter((r) => !r.iserror).map((r) => r.id)
+    const skipCount = selected.length - cleanIds.length
+
+    if (cleanIds.length === 0) {
+      setActionMsg(
+        'No error-free transactions selected. Fix errors or select valid rows to process.',
+      )
+      return
+    }
+
+    setActionBusy(true)
+    setActionMsg(null)
+    try {
+      const res = await processVehicleStaging(vehicle, jobId, Array.from(checked))
+      await loadStaging(jobId)
+      setChecked(new Set())
+      const processed = res.processed ?? cleanIds.length
+      const skipped = res.skipped_errors ?? skipCount
+      setActionMsg(
+        skipped > 0
+          ? `Processed ${processed} transaction(s). Skipped ${skipped} with errors.`
+          : `Processed ${processed} transaction(s) into permanent table.`,
+      )
+    } catch (err) {
+      setActionMsg(err instanceof Error ? err.message : 'Process failed')
+    } finally {
+      setActionBusy(false)
+    }
+  }
 
   return (
     <div className="space-y-5">
@@ -288,7 +375,38 @@ export function VehicleUploadTab({
                   {rows.length ? ` · ${rows.length} row(s)` : ''}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
+                {checked.size > 0 && (
+                  <>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="sm"
+                      disabled={actionBusy || !jobId}
+                      onClick={() => void onDeleteSelected()}
+                    >
+                      {actionBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-4 w-4" />
+                      )}
+                      Delete ({checked.size})
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      disabled={actionBusy || !jobId}
+                      onClick={() => void onProcessSelected()}
+                    >
+                      {actionBusy ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="h-4 w-4" />
+                      )}
+                      Process
+                    </Button>
+                  </>
+                )}
                 <Button
                   type="button"
                   variant="secondary"
@@ -312,8 +430,16 @@ export function VehicleUploadTab({
                 {progressLines.join('\n')}
               </pre>
             )}
+            {actionMsg && (
+              <p className="mt-2 text-xs text-cyan-200/80">{actionMsg}</p>
+            )}
             {error && (
               <p className="mt-2 text-xs text-red-300">{error}</p>
+            )}
+            {!jobId && (
+              <p className="mt-2 text-[11px] text-amber-200/80">
+                Select a job-scoped upload to Process / Delete rows.
+              </p>
             )}
           </GlassCard>
 
@@ -322,7 +448,16 @@ export function VehicleUploadTab({
               <table className="w-full min-w-[920px] text-left text-sm">
                 <thead>
                   <tr className="border-b border-white/5 text-[11px] uppercase tracking-wider text-slate-500">
-                    <th className="px-4 py-3 font-semibold">Date</th>
+                    <th className="px-4 py-3 font-semibold">
+                      <input
+                        type="checkbox"
+                        checked={allChecked}
+                        onChange={toggleAll}
+                        className="h-3.5 w-3.5 rounded border-slate-600 bg-navy-800 accent-accent-500"
+                        aria-label="Select all"
+                      />
+                    </th>
+                    <th className="px-3 py-3 font-semibold">Date</th>
                     <th className="px-3 py-3 font-semibold">Type</th>
                     <th className="px-3 py-3 font-semibold">Instrument</th>
                     <th className="px-3 py-3 font-semibold">ISIN / Folio</th>
@@ -342,7 +477,16 @@ export function VehicleUploadTab({
                         transition={{ delay: Math.min(i, 12) * 0.02 }}
                         className="border-b border-white/[0.03] hover:bg-white/[0.02]"
                       >
-                        <td className="px-4 py-3 font-mono text-xs text-slate-300">
+                        <td className="px-4 py-3">
+                          <input
+                            type="checkbox"
+                            checked={checked.has(row.id)}
+                            onChange={() => toggleOne(row.id)}
+                            className="h-3.5 w-3.5 rounded border-slate-600 bg-navy-800 accent-accent-500"
+                            aria-label={`Select ${row.id}`}
+                          />
+                        </td>
+                        <td className="px-3 py-3 font-mono text-xs text-slate-300">
                           {formatDate(row.tradeDate)}
                         </td>
                         <td className="px-3 py-3">

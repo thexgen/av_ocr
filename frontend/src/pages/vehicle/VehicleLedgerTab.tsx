@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Filter, Loader2, Trash2 } from 'lucide-react'
-import { fetchVehicleStaging } from '../../api/client'
+import { fetchVehicleLedger } from '../../api/client'
 import { Button, GlassCard } from '../../components/ui/GlassCard'
 import {
   DEFAULT_PAGE_SIZE,
@@ -90,19 +90,6 @@ export function VehicleLedgerTab({
   const rows = useMemo(() => {
     if (!fetched) return [] as VehicleLedgerRow[]
     return ledgerRows.filter((r) => {
-      // Staging loads use default entity — don't over-filter live rows
-      if (
-        !['mutual-fund', 'fixed-income', 'direct-equity'].includes(vehicle) &&
-        r.entityId !== applied.entityId
-      ) {
-        return false
-      }
-      if (
-        r.tradeDate &&
-        (r.tradeDate < applied.fromDate || r.tradeDate > applied.toDate)
-      ) {
-        return false
-      }
       const q = query.toLowerCase()
       if (
         q &&
@@ -115,7 +102,7 @@ export function VehicleLedgerTab({
       }
       return true
     })
-  }, [applied, fetched, query, ledgerRows, vehicle])
+  }, [fetched, query, ledgerRows])
 
   useEffect(() => {
     setPage(1)
@@ -169,31 +156,29 @@ export function VehicleLedgerTab({
 
     setLoading(true)
     try {
-      const staged = await fetchVehicleStaging(vehicle, { limit: 500 })
-      if (staged.length === 0) {
-        setLedgerRows([])
-      } else {
-        setLedgerRows(
-          staged.map((r) => ({
-            id: r.id,
-            entityId: r.entityId?.startsWith('ent-')
-              ? r.entityId
-              : VEHICLE_ENTITIES.find((e) => e.name === r.entityName)?.id ||
-                VEHICLE_ENTITIES[0].id,
-            entityName: r.entityName,
-            folioOrIsin: r.folioOrIsin || '—',
-            tradeDate: r.tradeDate || '',
-            type: r.type || '—',
-            schemeOrInstrument: r.schemeOrInstrument || '—',
-            units: r.units,
-            navOrPrice: r.navOrPrice,
-            amount: r.amount,
-          })),
-        )
-      }
+      const posted = await fetchVehicleLedger(vehicle, {
+        entityId,
+        fromDate,
+        toDate,
+        limit: 2000,
+      })
+      setLedgerRows(
+        posted.map((r) => ({
+          id: r.id,
+          entityId: r.entityId || VEHICLE_ENTITIES[0].id,
+          entityName: r.entityName,
+          folioOrIsin: r.folioOrIsin || '—',
+          tradeDate: r.tradeDate || '',
+          type: r.type || '—',
+          schemeOrInstrument: r.schemeOrInstrument || '—',
+          units: r.units,
+          navOrPrice: r.navOrPrice,
+          amount: r.amount,
+        })),
+      )
     } catch (err) {
-      setLoadError(err instanceof Error ? err.message : 'Failed to load staging')
-      setLedgerRows([...initialRows])
+      setLoadError(err instanceof Error ? err.message : 'Failed to load ledger')
+      setLedgerRows([])
     } finally {
       setLoading(false)
     }
@@ -270,8 +255,8 @@ export function VehicleLedgerTab({
           <p className="mt-3 text-xs text-red-300">{loadError}</p>
         )}
         <p className="mt-3 text-[11px] text-slate-500">
-          Showing staged temp rows (from chat or Upload). Use Upload tab for the
-          latest job table.
+          Showing posted rows from permanent table (entity={applied.entityId}).
+          Process temp rows from the Upload tab first.
         </p>
       </GlassCard>
 

@@ -11,18 +11,29 @@ from pydantic import BaseModel, Field
 from backend.api.deps import get_engine
 from backend.config import OUTPUT_PREFIX
 from backend.db.bankcash_repository import (
+    backfill_bankcash_account_defaults,
     delete_temp_rows,
+    fetch_bankcash_ledger,
     fetch_temp_transactions_by_job,
     process_temp_rows,
 )
 from backend.db.connection import DatabaseError, ping_database
 from backend.db.mutualfund_repository import (
+    delete_mf_temp_rows,
     ensure_mutualfundtemp_columns,
     fetch_mf_temp_by_job,
+    fetch_mutualfund_ledger,
     fetch_recent_mf_temp,
+    process_mf_temp_rows,
 )
 from backend.db.settings import get_staging_defaults
-from backend.db.vehicle_staging import ensure_vehicle_staging_tables, fetch_vehicle_temp
+from backend.db.vehicle_staging import (
+    delete_vehicle_temp_rows,
+    ensure_vehicle_staging_tables,
+    fetch_vehicle_ledger,
+    fetch_vehicle_temp,
+    process_vehicle_temp_rows,
+)
 from backend.exceptions import ProcessingError, UnsupportedDocumentError
 from backend.jessy.db import ensure_jessy_tables
 from backend.jessy.router import router as jessy_router
@@ -33,6 +44,12 @@ from backend.vehicle.pipeline import process_vehicle_attachment
 
 class TempRowIdsBody(BaseModel):
     ids: list[int | str] = Field(default_factory=list)
+
+
+class VehicleTempRowIdsBody(BaseModel):
+    job_id: str
+    ids: list[int | str] = Field(default_factory=list)
+
 
 logger = logging.getLogger("holding_engine")
 
@@ -71,6 +88,9 @@ def create_app() -> FastAPI:
         try:
             ensure_mutualfundtemp_columns()
             ensure_vehicle_staging_tables()
+            filled = backfill_bankcash_account_defaults()
+            if filled:
+                logger.info("Backfilled entity/account on %s bankcash row(s)", filled)
         except Exception as exc:  # noqa: BLE001
             logger.warning("vehicle staging ensure skipped: %s", exc)
 
@@ -249,6 +269,112 @@ def create_app() -> FastAPI:
             "vehicle": vehicle,
             "entity_id": defaults.entity_id,
             "entity_name": defaults.entity_name,
+            "transactions": transactions,
+        }
+
+    @app.post("/vehicle/{vehicle}/staging/process")
+    def process_vehicle_staging(vehicle: str, body: VehicleTempRowIdsBody) -> dict:
+        """Post selected clean temp rows into the permanent vehicle table."""
+        if not body.job_id:
+            raise HTTPException(status_code=400, detail="job_id is required")
+        try:
+            if vehicle == "mutual-fund":
+                return process_mf_temp_rows(job_id=body.job_id, ids=body.ids)
+            if vehicle in {"fixed-income", "direct-equity"}:
+                return process_vehicle_temp_rows(
+                    vehicle=vehicle, job_id=body.job_id, ids=body.ids
+                )
+            raise HTTPException(status_code=404, detail=f"Unknown vehicle: {vehicle}")
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
+
+    @app.post("/vehicle/{vehicle}/staging/delete")
+    def delete_vehicle_staging(vehicle: str, body: VehicleTempRowIdsBody) -> dict:
+        """Delete selected temp rows for a vehicle job."""
+        if not body.job_id:
+            raise HTTPException(status_code=400, detail="job_id is required")
+        try:
+            if vehicle == "mutual-fund":
+                return delete_mf_temp_rows(job_id=body.job_id, ids=body.ids)
+            if vehicle in {"fixed-income", "direct-equity"}:
+                return delete_vehicle_temp_rows(
+                    vehicle=vehicle, job_id=body.job_id, ids=body.ids
+                )
+            raise HTTPException(status_code=404, detail=f"Unknown vehicle: {vehicle}")
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
+
+    @app.get("/bankcash/ledger")
+    def bankcash_ledger(
+        entity_id: int | None = None,
+        account_id: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """Permanent bankcash rows for the Ledger tab."""
+        defaults = get_staging_defaults()
+        try:
+            transactions = fetch_bankcash_ledger(
+                entity_id=entity_id if entity_id is not None else defaults.entity_id,
+                account_id=account_id,
+                from_date=from_date,
+                to_date=to_date,
+                limit=limit,
+            )
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
+        return {
+            "total": len(transactions),
+            "entity_id": defaults.entity_id,
+            "entity_name": defaults.entity_name,
+            "account_id": defaults.account_id,
+            "transactions": transactions,
+        }
+
+    @app.get("/vehicle/{vehicle}/ledger")
+    def vehicle_ledger(
+        vehicle: str,
+        entity_id: int | None = None,
+        account_id: int | None = None,
+        from_date: str | None = None,
+        to_date: str | None = None,
+        limit: int = 1000,
+    ) -> dict:
+        """Permanent ledger rows for MF / FI / DE."""
+        defaults = get_staging_defaults()
+        eid = entity_id if entity_id is not None else defaults.entity_id
+        try:
+            if vehicle == "mutual-fund":
+                rows = fetch_mutualfund_ledger(
+                    entity_id=eid,
+                    account_id=account_id,
+                    from_date=from_date,
+                    to_date=to_date,
+                    limit=limit,
+                )
+                transactions = _map_mf_staging_rows(rows, defaults)
+            elif vehicle in {"fixed-income", "direct-equity"}:
+                rows = fetch_vehicle_ledger(
+                    vehicle,
+                    entity_id=eid,
+                    account_id=account_id,
+                    from_date=from_date,
+                    to_date=to_date,
+                    limit=limit,
+                )
+                transactions = _map_vehicle_staging_rows(rows, defaults)
+            else:
+                raise HTTPException(status_code=404, detail=f"Unknown vehicle: {vehicle}")
+        except DatabaseError as exc:
+            raise HTTPException(status_code=503, detail=exc.message) from exc
+
+        return {
+            "total": len(transactions),
+            "vehicle": vehicle,
+            "entity_id": defaults.entity_id,
+            "entity_name": defaults.entity_name,
+            "account_id": defaults.account_id,
             "transactions": transactions,
         }
 

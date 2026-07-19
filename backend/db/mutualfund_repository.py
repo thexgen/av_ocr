@@ -16,6 +16,7 @@ logger = logging.getLogger("holding_engine")
 _INSERT_COLUMNS = [
     "jobid",
     "entityid",
+    "accountid",
     "transactiondate",
     "txnid",
     "transactiontypeid",
@@ -47,6 +48,10 @@ _INSERT_COLUMNS = [
     "updatedby",
     "iserror",
     "errordesc",
+]
+
+_MAIN_INSERT_COLUMNS = [
+    c for c in _INSERT_COLUMNS if c not in {"jobid", "iserror", "errordesc"}
 ]
 
 
@@ -94,7 +99,8 @@ def _build_row(
 
     return {
         "jobid": job_id,
-        "entityid": parsed.entity_id or defaults.entity_id,
+        "entityid": defaults.entity_id,
+        "accountid": defaults.account_id,
         "transactiondate": parsed.trade_date,
         "txnid": parsed.transaction_id,
         "transactiontypeid": None,
@@ -189,7 +195,7 @@ def fetch_mf_temp_by_job(job_id: str) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, jobid, entityid, transactiondate, txnqualifier,
+                    SELECT id, jobid, entityid, accountid, transactiondate, txnqualifier,
                            syncdescription, units, navperunit, amount, voucher,
                            filename, iserror, errordesc, created
                     FROM `mutualfundtemp`
@@ -213,7 +219,7 @@ def fetch_recent_mf_temp(limit: int = 200) -> list[dict[str, Any]]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT id, jobid, entityid, transactiondate, txnqualifier,
+                    SELECT id, jobid, entityid, accountid, transactiondate, txnqualifier,
                            syncdescription, units, navperunit, amount, voucher,
                            filename, iserror, errordesc, created
                     FROM `mutualfundtemp`
@@ -225,3 +231,140 @@ def fetch_recent_mf_temp(limit: int = 200) -> list[dict[str, Any]]:
                 return list(cur.fetchall() or [])
     except Exception as exc:  # noqa: BLE001
         raise DatabaseError(f"Failed to load mutualfundtemp rows: {exc}") from exc
+
+
+def _normalize_ids(ids: list[int | str]) -> list[int]:
+    out: list[int] = []
+    for raw in ids:
+        try:
+            out.append(int(raw))
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def delete_mf_temp_rows(*, job_id: str, ids: list[int | str]) -> dict[str, Any]:
+    id_list = _normalize_ids(ids)
+    if not id_list:
+        return {"job_id": job_id, "deleted": 0}
+    placeholders = ", ".join(["%s"] * len(id_list))
+    sql = (
+        f"DELETE FROM `mutualfundtemp` WHERE `jobid` = %s AND `id` IN ({placeholders})"
+    )
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, (job_id, *id_list))
+                deleted = cur.rowcount
+    except Exception as exc:  # noqa: BLE001
+        raise DatabaseError(
+            f"Failed to delete mutualfundtemp rows for job {job_id}: {exc}"
+        ) from exc
+    return {"job_id": job_id, "deleted": deleted}
+
+
+def process_mf_temp_rows(*, job_id: str, ids: list[int | str]) -> dict[str, Any]:
+    """Post clean selected rows from mutualfundtemp → mutualfund."""
+    ensure_mutualfundtemp_columns()
+    id_list = _normalize_ids(ids)
+    if not id_list:
+        return {
+            "job_id": job_id,
+            "requested": 0,
+            "processed": 0,
+            "skipped_errors": 0,
+            "deleted_from_temp": 0,
+        }
+
+    defaults = get_staging_defaults()
+    placeholders = ", ".join(["%s"] * len(id_list))
+    select_sql = f"""
+        SELECT * FROM `mutualfundtemp`
+        WHERE `jobid` = %s AND `id` IN ({placeholders})
+    """
+    insert_placeholders = ", ".join([f"%({c})s" for c in _MAIN_INSERT_COLUMNS])
+    col_sql = ", ".join(f"`{c}`" for c in _MAIN_INSERT_COLUMNS)
+    insert_sql = f"INSERT INTO `mutualfund` ({col_sql}) VALUES ({insert_placeholders})"
+
+    clean: list[dict[str, Any]] = []
+    skipped = 0
+    deleted = 0
+
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(select_sql, (job_id, *id_list))
+                rows = list(cur.fetchall() or [])
+                clean = [r for r in rows if int(r.get("iserror") or 0) == 0]
+                skipped = len(rows) - len(clean)
+
+                if clean:
+                    payload = []
+                    for row in clean:
+                        item = {c: row.get(c) for c in _MAIN_INSERT_COLUMNS}
+                        item["entityid"] = defaults.entity_id
+                        item["accountid"] = defaults.account_id
+                        payload.append(item)
+                    cur.executemany(insert_sql, payload)
+                    clean_ids = [int(r["id"]) for r in clean]
+                    del_ph = ", ".join(["%s"] * len(clean_ids))
+                    cur.execute(
+                        f"DELETE FROM `mutualfundtemp` WHERE `jobid` = %s AND `id` IN ({del_ph})",
+                        (job_id, *clean_ids),
+                    )
+                    deleted = cur.rowcount
+    except Exception as exc:  # noqa: BLE001
+        raise DatabaseError(
+            f"Failed to process mutualfundtemp rows for job {job_id}: {exc}"
+        ) from exc
+
+    return {
+        "job_id": job_id,
+        "requested": len(id_list),
+        "processed": len(clean),
+        "skipped_errors": skipped,
+        "deleted_from_temp": deleted,
+    }
+
+
+def fetch_mutualfund_ledger(
+    *,
+    entity_id: int | None = None,
+    account_id: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Load posted rows from permanent `mutualfund`."""
+    defaults = get_staging_defaults()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if entity_id is not None:
+        clauses.append("`entityid` = %s")
+        params.append(entity_id)
+    if account_id is not None:
+        clauses.append("`accountid` = %s")
+        params.append(account_id)
+    if from_date:
+        clauses.append("`transactiondate` >= %s")
+        params.append(from_date)
+    if to_date:
+        clauses.append("`transactiondate` <= %s")
+        params.append(to_date)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"""
+        SELECT id, entityid, accountid, transactiondate, txnqualifier,
+               syncdescription, units, navperunit, amount, voucher, filename
+        FROM `mutualfund`
+        {where}
+        ORDER BY `transactiondate` DESC, `id` DESC
+        LIMIT %s
+    """
+    params.append(max(1, min(int(limit), 5000)))
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, tuple(params))
+                return list(cur.fetchall() or [])
+    except Exception as exc:  # noqa: BLE001
+        raise DatabaseError(f"Failed to load mutualfund ledger: {exc}") from exc

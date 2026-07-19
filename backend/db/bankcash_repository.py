@@ -341,9 +341,13 @@ def process_temp_rows(*, job_id: str, ids: list[int | str]) -> dict[str, Any]:
                 skipped = len(rows) - len(clean)
 
                 if clean:
+                    defaults = get_staging_defaults()
                     payload = []
                     for row in clean:
                         item = {c: row.get(c) for c in _MAIN_INSERT_COLUMNS}
+                        # Dev defaults so ledger filters (entity=1, account=101) work
+                        item["entityid"] = defaults.entity_id
+                        item["accountid"] = defaults.account_id
                         if item.get("createdby") is None:
                             item["createdby"] = row.get("userid")
                         if item.get("updatedby") is None:
@@ -379,3 +383,111 @@ def process_temp_rows(*, job_id: str, ids: list[int | str]) -> dict[str, Any]:
         "skipped_errors": skipped,
         "deleted_from_temp": deleted,
     }
+
+
+def fetch_bankcash_ledger(
+    *,
+    entity_id: int | None = None,
+    account_id: int | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Load posted rows from permanent `bankcash` for the Ledger tab."""
+    defaults = get_staging_defaults()
+    clauses: list[str] = []
+    params: list[Any] = []
+
+    if entity_id is not None:
+        clauses.append("`entityid` = %s")
+        params.append(entity_id)
+    if account_id is not None:
+        clauses.append("`accountid` = %s")
+        params.append(account_id)
+    if from_date:
+        clauses.append("`transactiondate` >= %s")
+        params.append(from_date)
+    if to_date:
+        clauses.append("`transactiondate` <= %s")
+        params.append(to_date)
+
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    sql = f"""
+        SELECT
+            id, entityid, accountid, transactiontypeid, transactiondate,
+            amount, description, checkno, instrumentno, syncdescription
+        FROM `bankcash`
+        {where}
+        ORDER BY `transactiondate` DESC, `id` DESC
+        LIMIT %s
+    """
+    params.append(max(1, min(int(limit), 5000)))
+
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, tuple(params))
+                raw_rows = list(cur.fetchall() or [])
+    except Exception as exc:  # noqa: BLE001
+        raise DatabaseError(f"Failed to load bankcash ledger: {exc}") from exc
+
+    out: list[dict[str, Any]] = []
+    running = 0.0
+    # Oldest → newest for balance, then reverse for display order
+    chronological = list(reversed(raw_rows))
+    for row in chronological:
+        amount = float(row["amount"]) if row.get("amount") is not None else 0.0
+        running += amount
+        type_id = row.get("transactiontypeid")
+        type_label = (
+            row.get("syncdescription")
+            or TXN_TYPE_LABELS.get(int(type_id) if type_id is not None else -1)
+            or ("Credit" if amount >= 0 else "Debit")
+        )
+        if type_label not in {"Credit", "Debit"}:
+            type_label = "Credit" if amount >= 0 else "Debit"
+        txn_date = row.get("transactiondate")
+        trade_date = (
+            txn_date.isoformat()
+            if hasattr(txn_date, "isoformat")
+            else (str(txn_date) if txn_date else "")
+        )
+        acct = row.get("accountid") or defaults.account_id
+        out.append(
+            {
+                "id": str(row.get("id")),
+                "entityId": str(row.get("entityid") or defaults.entity_id),
+                "entityName": defaults.entity_name,
+                "accountId": str(acct),
+                "accountLabel": defaults.account_label,
+                "tradeDate": trade_date,
+                "type": type_label,
+                "description": row.get("description") or "",
+                "checkNo": row.get("checkno") or row.get("instrumentno") or "",
+                "amount": amount,
+                "balance": running,
+            }
+        )
+    out.reverse()
+    return out
+
+
+def backfill_bankcash_account_defaults() -> int:
+    """Dev helper: fill NULL accountid / entityid on permanent bankcash rows."""
+    defaults = get_staging_defaults()
+    try:
+        with mysql_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE `bankcash`
+                    SET `entityid` = COALESCE(`entityid`, %s),
+                        `accountid` = COALESCE(`accountid`, %s)
+                    WHERE `entityid` IS NULL OR `accountid` IS NULL
+                    """,
+                    (defaults.entity_id, defaults.account_id),
+                )
+                return int(cur.rowcount or 0)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("bankcash account backfill skipped: %s", exc)
+        return 0

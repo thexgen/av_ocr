@@ -280,3 +280,123 @@ export function fetchMutualFundStaging(options?: {
 }): Promise<VehicleStagingRow[]> {
   return fetchVehicleStaging('mutual-fund', options)
 }
+
+export interface LedgerFilterOptions {
+  entityId?: string | number
+  accountId?: string | number
+  fromDate?: string
+  toDate?: string
+  limit?: number
+}
+
+export interface BankCashLedgerRow {
+  id: string
+  entityId: string
+  entityName: string
+  accountId: string
+  accountLabel: string
+  tradeDate: string
+  type: string
+  description: string
+  checkNo: string
+  amount: number
+  balance: number
+}
+
+function appendLedgerParams(
+  params: URLSearchParams,
+  options?: LedgerFilterOptions,
+) {
+  if (options?.entityId != null && options.entityId !== '' && options.entityId !== 'all') {
+    params.set('entity_id', String(options.entityId))
+  }
+  if (
+    options?.accountId != null &&
+    options.accountId !== '' &&
+    options.accountId !== 'all'
+  ) {
+    params.set('account_id', String(options.accountId))
+  }
+  if (options?.fromDate) params.set('from_date', options.fromDate)
+  if (options?.toDate) params.set('to_date', options.toDate)
+  if (options?.limit) params.set('limit', String(options.limit))
+}
+
+export async function fetchBankCashLedger(
+  options?: LedgerFilterOptions,
+): Promise<BankCashLedgerRow[]> {
+  const params = new URLSearchParams()
+  appendLedgerParams(params, options)
+  const qs = params.toString()
+  const res = await fetch(`${API_BASE}/bankcash/ledger${qs ? `?${qs}` : ''}`)
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail ||
+        `Failed to load bank cash ledger (${res.status})`,
+    )
+  }
+  const data = (await res.json()) as { transactions?: BankCashLedgerRow[] }
+  return data.transactions ?? []
+}
+
+export async function fetchVehicleLedger(
+  vehicle: string,
+  options?: LedgerFilterOptions,
+): Promise<VehicleStagingRow[]> {
+  const params = new URLSearchParams()
+  appendLedgerParams(params, options)
+  const qs = params.toString()
+  const res = await fetch(
+    `${API_BASE}/vehicle/${encodeURIComponent(vehicle)}/ledger${qs ? `?${qs}` : ''}`,
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail ||
+        `Failed to load ${vehicle} ledger (${res.status})`,
+    )
+  }
+  const data = (await res.json()) as { transactions?: VehicleStagingRow[] }
+  return data.transactions ?? []
+}
+
+async function postVehicleTempRowIds(
+  vehicle: string,
+  action: 'delete' | 'process',
+  jobId: string,
+  ids: string[],
+): Promise<TempRowsActionResponse> {
+  const res = await fetch(
+    `${API_BASE}/vehicle/${encodeURIComponent(vehicle)}/staging/${action}`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ job_id: jobId, ids }),
+    },
+  )
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(
+      (body as { detail?: string }).detail ||
+        `Failed to ${action} ${vehicle} rows (${res.status})`,
+    )
+  }
+  return res.json() as Promise<TempRowsActionResponse>
+}
+
+export function deleteVehicleStaging(
+  vehicle: string,
+  jobId: string,
+  ids: string[],
+) {
+  return postVehicleTempRowIds(vehicle, 'delete', jobId, ids)
+}
+
+export function processVehicleStaging(
+  vehicle: string,
+  jobId: string,
+  ids: string[],
+) {
+  return postVehicleTempRowIds(vehicle, 'process', jobId, ids)
+}

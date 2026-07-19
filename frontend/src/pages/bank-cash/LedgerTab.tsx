@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
-import { Filter, Trash2 } from 'lucide-react'
+import { Filter, Loader2, Trash2 } from 'lucide-react'
+import { fetchBankCashLedger } from '../../api/client'
 import { Button, GlassCard } from '../../components/ui/GlassCard'
 import {
   DEFAULT_PAGE_SIZE,
   TablePagination,
   paginateSlice,
 } from '../../components/ui/TablePagination'
-import { ENTITIES, MOCK_LEDGER, type LedgerRow } from '../../data/bankCashMock'
+import { ENTITIES, type LedgerRow } from '../../data/bankCashMock'
 
 function formatMoney(n: number) {
   return new Intl.NumberFormat('en-IN', {
@@ -18,7 +19,10 @@ function formatMoney(n: number) {
 }
 
 function formatDate(iso: string) {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString('en-IN', {
+  if (!iso) return '—'
+  const d = new Date(`${iso}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return iso
+  return d.toLocaleDateString('en-IN', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
@@ -28,17 +32,19 @@ function formatDate(iso: string) {
 export function LedgerTab({ query }: { query: string }) {
   const [entityId, setEntityId] = useState(ENTITIES[0].id)
   const [accountId, setAccountId] = useState(ENTITIES[0].accounts[0].id)
-  const [fromDate, setFromDate] = useState('2026-06-01')
-  const [toDate, setToDate] = useState('2026-06-30')
+  const [fromDate, setFromDate] = useState('2000-01-01')
+  const [toDate, setToDate] = useState('2099-12-31')
   const [fetched, setFetched] = useState(true)
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [page, setPage] = useState(1)
-  const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>(() => [...MOCK_LEDGER])
+  const [ledgerRows, setLedgerRows] = useState<LedgerRow[]>([])
   const [checked, setChecked] = useState<Set<string>>(new Set())
   const [applied, setApplied] = useState({
     entityId: ENTITIES[0].id,
     accountId: ENTITIES[0].accounts[0].id,
-    fromDate: '2026-06-01',
-    toDate: '2026-06-30',
+    fromDate: '2000-01-01',
+    toDate: '2099-12-31',
   })
 
   const entity = ENTITIES.find((e) => e.id === entityId) ?? ENTITIES[0]
@@ -47,9 +53,6 @@ export function LedgerTab({ query }: { query: string }) {
   const rows = useMemo(() => {
     if (!fetched) return [] as LedgerRow[]
     return ledgerRows.filter((r) => {
-      if (r.entityId !== applied.entityId) return false
-      if (applied.accountId !== 'all' && r.accountId !== applied.accountId) return false
-      if (r.tradeDate < applied.fromDate || r.tradeDate > applied.toDate) return false
       const q = query.toLowerCase()
       if (
         q &&
@@ -62,7 +65,7 @@ export function LedgerTab({ query }: { query: string }) {
       }
       return true
     })
-  }, [applied, fetched, query, ledgerRows])
+  }, [fetched, query, ledgerRows])
 
   useEffect(() => {
     setPage(1)
@@ -113,12 +116,48 @@ export function LedgerTab({ query }: { query: string }) {
     setAccountId(next?.accounts[0]?.id ?? 'all')
   }
 
-  const onFetch = () => {
+  const onFetch = async () => {
     setApplied({ entityId, accountId, fromDate, toDate })
     setFetched(true)
     setPage(1)
     setChecked(new Set())
+    setLoadError(null)
+    setLoading(true)
+    try {
+      const data = await fetchBankCashLedger({
+        entityId,
+        accountId: accountId === 'all' ? undefined : accountId,
+        fromDate,
+        toDate,
+        limit: 2000,
+      })
+      setLedgerRows(
+        data.map((r) => ({
+          id: r.id,
+          entityId: r.entityId,
+          entityName: r.entityName,
+          accountId: r.accountId,
+          accountLabel: r.accountLabel,
+          tradeDate: r.tradeDate,
+          type: r.type === 'Debit' ? 'Debit' : 'Credit',
+          description: r.description,
+          checkNo: r.checkNo,
+          amount: r.amount,
+          balance: r.balance,
+        })),
+      )
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : 'Failed to load ledger')
+      setLedgerRows([])
+    } finally {
+      setLoading(false)
+    }
   }
+
+  useEffect(() => {
+    void onFetch()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   return (
     <div className="space-y-5">
@@ -184,11 +223,28 @@ export function LedgerTab({ query }: { query: string }) {
           </label>
 
           <div className="flex items-end">
-            <Button className="w-full" onClick={onFetch}>
-              Fetch
+            <Button
+              className="w-full"
+              disabled={loading}
+              onClick={() => void onFetch()}
+            >
+              {loading ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading…
+                </>
+              ) : (
+                'Fetch'
+              )}
             </Button>
           </div>
         </div>
+        {loadError && <p className="mt-3 text-xs text-red-300">{loadError}</p>}
+        <p className="mt-3 text-[11px] text-slate-500">
+          Showing posted rows from permanent <span className="text-slate-400">bankcash</span>{' '}
+          (entity={applied.entityId}
+          {applied.accountId !== 'all' ? `, account=${applied.accountId}` : ''}).
+        </p>
       </GlassCard>
 
       <GlassCard className="overflow-hidden" delay={0.1}>
@@ -288,9 +344,16 @@ export function LedgerTab({ query }: { query: string }) {
             </tbody>
           </table>
 
-          {rows.length === 0 && (
+          {loading && (
+            <div className="flex items-center justify-center gap-2 px-5 py-16 text-sm text-slate-500">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading bankcash…
+            </div>
+          )}
+
+          {!loading && rows.length === 0 && (
             <div className="px-5 py-16 text-center text-sm text-slate-500">
-              No ledger rows for this filter. Adjust dates or click Fetch.
+              No ledger rows for this filter. Process temp rows from Upload, then Fetch.
             </div>
           )}
         </div>
