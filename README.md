@@ -1,37 +1,43 @@
-# Aether Wealth — AI Statement Import
+# Asset Vantage (`av_ocr`)
 
-Enterprise React UI for an AI-powered investment statement import workflow.
+Wealth OS frontend + bank-statement processing engine + Jessy RAG chatbot.
+
+## Layout
+
+```
+av_ocr/
+  frontend/     # React (Vite + Tailwind)
+  backend/      # FastAPI (OCR pipeline + Jessy)
+```
 
 ## Stack
 
-- React 19 + TypeScript
-- Vite
-- Tailwind CSS v4
-- Framer Motion
-- Lucide React
-- React Router
-
-## Pages
-
-| Route | Description |
-|-------|-------------|
-| `/` | Dashboard — stats, recent imports, supported formats |
-| `/upload` | Multi-file drag & drop upload queue |
-| `/processing` | Animated AI processing pipeline |
-| `/review` | Transaction table with detail drawer |
-| `/success` | Import summary & report download |
+- Frontend: React 19, TypeScript, Vite, Tailwind v4, Framer Motion
+- Backend: FastAPI, MySQL (bank cash), Qwen (mapping + Jessy), Qdrant (Jessy vectors)
 
 ## Run
 
 ```bash
+# Frontend
+cd frontend
 npm install
 npm run dev
+
+# Backend (from av_ocr root)
+pip install -r backend/requirements.txt
+uvicorn backend.api.app:app --reload --host 127.0.0.1 --port 8000
 ```
 
-Open the local URL printed by Vite (typically `http://localhost:5173`).
+Jessy also needs local Qdrant at `QDRANT_URL` (default `http://localhost:6333`) and `QWEN_API_KEY` in `backend/.env`.
 
-## Notes
+See `torun.md` for a short cheat sheet.
 
-- No backend — all data is mocked in `src/data/mockData.ts`
-- Upload validation runs client-side (type + size)
-- Processing steps are simulated, then auto-redirect to Review
+## Key routes
+
+| Route | Description |
+|-------|-------------|
+| `/` | Dashboard |
+| `/transactions/bank-cash` | Ledger + statement upload |
+| `/settings/knowledge-repository` | Jessy knowledge PDFs (admin) |
+
+Floating Jessy chat is available on every page (chat history survives navigation).
